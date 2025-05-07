@@ -153,31 +153,29 @@ Fetches the latest alerts from the configured Wazuh API, transforms them into MC
       {
         "protocol_version": "1.0",
         "source": "Wazuh",
-        "timestamp": "2023-10-27T10:30:00Z", // ISO 8601 format (RFC3339)
+        "timestamp": "2023-10-27T10:30:00Z", 
         "event_type": "alert",
         "context": {
-          "id": "wazuh_alert_id_1", // Wazuh alert ID
-          "category": "gdpr", // Derived from rule groups
-          "severity": "high", // Derived from rule level
+          "id": "wazuh_alert_id_1",
+          "category": "gdpr", 
+          "severity": "high", 
           "description": "High severity rule triggered",
-          "agent": { // Wazuh agent details
+          "agent": { 
             "id": "001",
             "name": "server-db"
           },
-          "data": { // Original Wazuh alert data field
+          "data": { 
             "srcip": "1.2.3.4",
             "dstport": "22"
           }
-          // Other relevant context fields might be added here
         },
         "metadata": {
           "integration": "Wazuh-MCP",
           "notes": "Data fetched via Wazuh API"
-          // Other metadata like Wazuh rule ID could be added
-          // "rule_id": "1002"
+         
         }
       },
-      // ... more MCP messages
+      
     ]
     ```
 -   **Error Responses:**
@@ -196,7 +194,7 @@ A simple health check endpoint.
     {
       "status": "ok",
       "service": "wazuh-mcp-server",
-      "timestamp": "2023-10-27T12:00:00Z" // Current server time in ISO 8601
+      "timestamp": "2023-10-27T12:00:00Z" 
     }
     ```
 -   **Error Responses:** None expected for this endpoint itself, but the server might be unreachable if down.
