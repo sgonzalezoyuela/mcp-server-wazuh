@@ -213,6 +213,7 @@ Navigate to the project root directory in your terminal and run:
 
 ```bash
 docker-compose -f docker-compose.all-in-one.yml up -d
+```
 
 This command will:
 - Download the necessary Wazuh and OpenSearch images (if not already present).
