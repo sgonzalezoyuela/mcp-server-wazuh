@@ -18,7 +18,6 @@ This server acts as a middleware:
 The server facilitates communication between Claude Desktop (or any MCP client) and the Wazuh API.
 
 ```ascii
-```ascii
 +-----------------+        +--------------------+        +-----------------+
 | Claude Desktop  |        | Wazuh MCP Server   |        | Wazuh           |
 | (MCP Client)    |        | (This Application) |        | (SIEM)          |
