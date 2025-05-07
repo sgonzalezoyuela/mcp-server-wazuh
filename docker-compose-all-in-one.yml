@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # Wazuh Indexer
+  wazuh-indexer:
+    image: wazuh/wazuh-indexer:4.7.2 
+    platform: linux/amd64
+    hostname: wazuh-indexer
+    restart: always
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - WAZUH_INITIAL_USER=admin
+      - WAZUH_INITIAL_PASSWORD=AdminPassword123! 
+      - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g 
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - wazuh-indexer-data:/var/lib/opensearch/data 
+
+  # Wazuh Manager
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.7.2 
+    platform: linux/amd64
+    hostname: wazuh-manager
+    restart: always
+    ports:
+      # Wazuh agent communication
+      - "1514:1514/udp"
+      - "1515:1515/tcp"
+      # Wazuh API
+      - "55000:55000"
+    environment:
+      - WAZUH_INDEXER_URL=http://wazuh-indexer:9200
+      - WAZUH_API_USER=wazuh_user_demo # API User for MCP Server to use
+      - WAZUH_API_PASSWORD=wazuh_password_demo # API Password for MCP Server to use
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy 
+    healthcheck: 
+        test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=50s"]
+        interval: 30s
+        timeout: 10s
+        retries: 5
+    volumes:
+      - wazuh-manager-data:/var/ossec/data 
+      - wazuh-manager-logs:/var/ossec/logs 
+      - wazuh-manager-etc:/var/ossec/etc 
+
+  # Wazuh Dashboard
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:4.7.2 
+    platform: linux/amd64
+    hostname: wazuh-dashboard
+    restart: always
+    ports:
+      - "8443:443" 
+    environment:
+      - WAZUH_INDEXER_URL=http://wazuh-indexer:9200
+      - WAZUH_API_URL=http://wazuh-manager:55000 
+      - WAZUH_USER=admin 
+      - WAZUH_PASSWORD=AdminPassword123! 
+      # - OPENSEARCH_DASHBOARDS_SERVER_SSL_ENABLED=true # Default is true
+      # - OPENSEARCH_DASHBOARDS_SERVER_SSL_KEY=/usr/share/wazuh-dashboard/certs/key.pem # Provide your certs if needed
+      # - OPENSEARCH_DASHBOARDS_SERVER_SSL_CERTIFICATE=/usr/share/wazuh-dashboard/certs/cert.pem
+    depends_on:
+      wazuh-manager:
+        condition: service_started 
+      wazuh-indexer:
+        condition: service_healthy 
+
+  # MCP Server 
+  mcp-server:
+    build: .
+    ports:
+      - "${MCP_SERVER_PORT:-8000}:${MCP_SERVER_PORT:-8000}" 
+    environment:
+      - WAZUH_HOST=wazuh-manager 
+      - WAZUH_PORT=55000
+      - WAZUH_USER=wazuh_user_demo 
+      - WAZUH_PASS=wazuh_password_demo
+      - VERIFY_SSL=false
+      - MCP_SERVER_PORT=${MCP_SERVER_PORT:-8000} 
+      - RUST_LOG=${RUST_LOG:-info}
+    restart: unless-stopped
+    depends_on:
+      wazuh-manager:
+        condition: service_started 
+
+volumes:
+  wazuh-indexer-data:
+  wazuh-manager-data:
+  wazuh-manager-logs:
+  wazuh-manager-etc:
+

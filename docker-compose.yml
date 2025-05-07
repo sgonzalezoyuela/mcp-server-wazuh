@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  mcp-server:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - WAZUH_HOST=${WAZUH_HOST:-localhost}
+      - WAZUH_PORT=${WAZUH_PORT:-55000}
+      - WAZUH_USER=${WAZUH_USER:-admin}
+      - WAZUH_PASS=${WAZUH_PASS:-admin}
+      - VERIFY_SSL=${VERIFY_SSL:-false}
+      - MCP_SERVER_PORT=${MCP_SERVER_PORT:-8000}
+    restart: unless-stopped
