@@ -271,7 +271,7 @@ To use this Wazuh MCP Server with Claude Desktop (or any other MCP-compatible cl
 4.  **Verify Firewall Rules:** Ensure that any firewalls between Claude Desktop and the Wazuh MCP Server allow traffic on the configured `MCP_SERVER_PORT`.
 
 Once configured, Claude Desktop should start polling the `/mcp` endpoint periodically to fetch the latest Wazuh security alerts in MCP format.
-`
+
 ## Development & Testing
 
 -   **Code Style:** Uses standard Rust formatting (`cargo fmt`).
