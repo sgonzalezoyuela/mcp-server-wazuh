@@ -438,7 +438,7 @@ impl McpServerCore {
         })
     }
 
-    fn create_error_response(
+    pub(crate) fn create_error_response(
         &self,
         code: i32,
         message: String,
