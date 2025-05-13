@@ -20,6 +20,7 @@ jsonwebtoken = "9.3"
 tower-http = { version = "0.6", features = ["trace"] }
 async-trait = "0.1"
 anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
 
 [dev-dependencies]
 mockito = "1.7"

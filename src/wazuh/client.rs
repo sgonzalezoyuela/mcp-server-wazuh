@@ -1,32 +1,35 @@
-use reqwest::{header, Client};
-use serde_json::Value;
-use std::time::{Duration, SystemTime};
-use tracing::{info, warn};
+use reqwest::{header, Client, Method};
+use serde_json::{json, Value};
+use std::time::Duration;
+use tracing::{debug, error, info};
 
 use super::error::WazuhApiError;
 
-pub struct WazuhApiClient {
+#[derive(Debug, Clone)]
+pub struct WazuhIndexerClient {
     username: String,
     password: String,
     base_url: String,
-    jwt_token: Option<String>,
-    jwt_expiration: Option<SystemTime>,
-    auth_endpoint: String,
     http_client: Client,
 }
 
-impl WazuhApiClient {
+// Renamed impl block
+impl WazuhIndexerClient {
     pub fn new(
         host: String,
-        port: u16,
+        indexer_port: u16,
         username: String,
         password: String,
         verify_ssl: bool,
     ) -> Self {
-        let base_url = format!("https://{}:{}", host, port);
+        debug!(%host, indexer_port, %username, %verify_ssl, "Creating new WazuhIndexerClient");
+        // Base URL now points to the Indexer
+        let base_url = format!("https://{}:{}", host, indexer_port);
+        debug!(%base_url, "Wazuh Indexer base URL set");
+
         let http_client = Client::builder()
             .danger_accept_invalid_certs(!verify_ssl)
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()
             .expect("Failed to create HTTP client");
 
@@ -34,135 +37,93 @@ impl WazuhApiClient {
             username,
             password,
             base_url,
-            jwt_token: None,
-            jwt_expiration: None,
-            auth_endpoint: "/security/user/authenticate".to_string(),
             http_client,
         }
     }
 
-    fn is_jwt_valid(&self) -> bool {
-        match (self.jwt_token.as_ref(), self.jwt_expiration) {
-            (Some(_), Some(expiration)) => match expiration.duration_since(SystemTime::now()) {
-                Ok(remaining) => remaining.as_secs() > 60,
-                Err(_) => false,
-            },
-            _ => false,
-        }
-    }
-
-    pub async fn get_jwt(&mut self) -> Result<String, WazuhApiError> {
-        if self.is_jwt_valid() {
-            return Ok(self.jwt_token.clone().unwrap());
-        }
-
-        let auth_url = format!("{}{}", self.base_url, self.auth_endpoint);
-        info!("Requesting new JWT token from {}", auth_url);
-
-        let response = self
-            .http_client
-            .post(&auth_url)
-            .basic_auth(&self.username, Some(&self.password))
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(WazuhApiError::AuthenticationError(format!(
-                "Authentication failed with status {}: {}",
-                status, error_text
-            )));
-        }
-
-        let data: Value = response.json().await?;
-        let token = data
-            .get("jwt")
-            .and_then(|t| t.as_str())
-            .ok_or(WazuhApiError::JwtNotFound)?
-            .to_string();
-
-        self.jwt_token = Some(token.clone());
-
-        self.jwt_expiration = Some(SystemTime::now() + Duration::from_secs(5 * 60));
-
-        info!("Obtained new JWT token valid for 5 minutes");
-        Ok(token)
-    }
-
-    async fn make_request(
-        &mut self,
-        method: reqwest::Method,
+    async fn make_indexer_request(
+        &self,
+        method: Method,
         endpoint: &str,
         body: Option<Value>,
     ) -> Result<Value, WazuhApiError> {
-        let jwt_token = self.get_jwt().await?;
+        debug!(?method, %endpoint, ?body, "Making request to Wazuh Indexer");
         let url = format!("{}{}", self.base_url, endpoint);
+        debug!(%url, "Constructed Indexer request URL");
 
         let mut request_builder = self
             .http_client
             .request(method.clone(), &url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", jwt_token));
+            .basic_auth(&self.username, Some(&self.password)); // Use Basic Auth
 
         if let Some(json_body) = &body {
-            request_builder = request_builder.json(json_body);
+            request_builder = request_builder
+                .header(header::CONTENT_TYPE, "application/json")
+                .json(json_body);
         }
+        debug!("Request builder configured with Basic Auth");
 
         let response = request_builder.send().await?;
+        let status = response.status();
+        debug!(%status, "Received response from Indexer endpoint");
 
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            warn!("JWT expired. Re-authenticating and retrying request.");
-            self.jwt_token = None;
-            let new_jwt_token = self.get_jwt().await?;
-
-            let mut retry_builder = self
-                .http_client
-                .request(method, &url)
-                .header(header::AUTHORIZATION, format!("Bearer {}", new_jwt_token));
-
-            if let Some(json_body) = &body {
-                retry_builder = retry_builder.json(json_body);
-            }
-
-            let retry_response = retry_builder.send().await?;
-
-            if !retry_response.status().is_success() {
-                let status = retry_response.status();
-                let error_text = retry_response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "Unknown error".to_string());
-                return Err(WazuhApiError::ApiError(format!(
-                    "API request failed with status {}: {}",
-                    status, error_text
-                )));
-            }
-
-            Ok(retry_response.json().await?)
-        } else if !response.status().is_success() {
-            let status = response.status();
+        if !status.is_success() {
             let error_text = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(WazuhApiError::ApiError(format!(
-                "API request failed with status {}: {}",
-                status, error_text
-            )))
-        } else {
-            Ok(response.json().await?)
+                .unwrap_or_else(|_| "Unknown error reading response body".to_string());
+            error!(%url, %status, %error_text, "Indexer API request failed");
+            // Provide more context in the error
+            return Err(WazuhApiError::ApiError(format!(
+                "Indexer request to {} failed with status {}: {}",
+                url, status, error_text
+            )));
         }
+
+        debug!("Indexer API request successful");
+        response.json().await.map_err(|e| {
+            error!("Failed to parse JSON response from Indexer: {}", e);
+            WazuhApiError::RequestError(e) // Use appropriate error variant
+        })
     }
 
-    pub async fn get_alerts(&mut self, query: Value) -> Result<Value, WazuhApiError> {
-        let index_pattern = "wazuh-alerts-*";
-        let endpoint = format!("/{}_search", index_pattern);
+    pub async fn get_alerts(&self) -> Result<Vec<Value>, WazuhApiError> {
+        let endpoint = "/wazuh-alerts*/_search";
+        let query_body = json!({
+            "size": 100,
+            "query": {
+                "match_all": {}
+            },
+        });
 
-        info!("Retrieving alerts with index pattern '{}'", index_pattern);
-        self.make_request(reqwest::Method::GET, &endpoint, Some(query))
-            .await
+        debug!(%endpoint, ?query_body, "Preparing to get alerts from Wazuh Indexer");
+        info!("Retrieving up to 100 alerts from Wazuh Indexer");
+
+        let response = self
+            .make_indexer_request(Method::POST, endpoint, Some(query_body))
+            .await?;
+
+        let hits = response
+            .get("hits")
+            .and_then(|h| h.get("hits"))
+            .and_then(|h_array| h_array.as_array())
+            .ok_or_else(|| {
+                error!(
+                    ?response,
+                    "Failed to find 'hits.hits' array in Indexer response"
+                );
+                WazuhApiError::ApiError("Indexer response missing 'hits.hits' array".to_string())
+            })?;
+
+        let alerts: Vec<Value> = hits
+            .iter()
+            .filter_map(|hit| hit.get("_source").cloned())
+            .collect();
+
+        debug!(
+            "Successfully retrieved {} alerts from Indexer",
+            alerts.len()
+        );
+        Ok(alerts)
     }
 }

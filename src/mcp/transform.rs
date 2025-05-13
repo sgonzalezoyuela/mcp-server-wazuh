@@ -1,27 +1,41 @@
 use chrono::{DateTime, Utc, SecondsFormat};
 use serde_json::{json, Value};
-use tracing::warn;
+use tracing::{debug, warn};
 
 pub fn transform_to_mcp(event: Value, event_type: String) -> Value {
+    debug!(?event, %event_type, "Entering transform_to_mcp");
+
     let source_obj = event.get("_source").unwrap_or(&event);
+    if event.get("_source").is_some() {
+        debug!("Event contains '_source' field, using it for transformation.");
+    } else {
+        debug!("Event does not contain '_source' field, using the event root for transformation.");
+    }
 
     let id = source_obj.get("id")
         .and_then(|v| v.as_str())
         .or_else(|| event.get("_id").and_then(|v| v.as_str()))
         .unwrap_or("unknown_id")
         .to_string();
+    debug!(%id, "Transformed: id");
 
     let default_rule = json!({});
     let rule = source_obj.get("rule").unwrap_or(&default_rule);
+    if source_obj.get("rule").is_none() {
+        debug!("Transformed: rule (defaulted to empty object)");
+    } else {
+        debug!(?rule, "Transformed: rule");
+    }
     let category = rule.get("groups")
         .and_then(|g| g.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
         .unwrap_or("unknown_category")
         .to_string();
+    debug!(%category, "Transformed: category");
 
-    let severity = rule.get("level")
-        .and_then(|v| v.as_u64())
+    let severity_level = rule.get("level").and_then(|v| v.as_u64());
+    let severity = severity_level
         .map(|level| match level {
             0..=3 => "low",
             4..=7 => "medium",
@@ -30,21 +44,38 @@ pub fn transform_to_mcp(event: Value, event_type: String) -> Value {
         })
         .unwrap_or("unknown_severity")
         .to_string();
+    debug!(?severity_level, %severity, "Transformed: severity");
 
     let description = rule.get("description")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    debug!(%description, "Transformed: description");
 
     let default_data = json!({});
-    let data = source_obj.get("data").cloned().unwrap_or(default_data);
+    let data = source_obj.get("data").cloned().unwrap_or_else(|| {
+        debug!("Transformed: data (defaulted to empty object)");
+        default_data.clone()
+    });
+    if source_obj.get("data").is_some() {
+        debug!(?data, "Transformed: data");
+    }
+
 
     let default_agent = json!({});
-    let agent = source_obj.get("agent").cloned().unwrap_or(default_agent);
+    let agent = source_obj.get("agent").cloned().unwrap_or_else(|| {
+        debug!("Transformed: agent (defaulted to empty object)");
+        default_agent.clone()
+    });
+    if source_obj.get("agent").is_some() {
+        debug!(?agent, "Transformed: agent");
+    }
+
 
     let timestamp_str = source_obj.get("timestamp")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    debug!(%timestamp_str, "Attempting to parse timestamp");
 
     let timestamp = DateTime::parse_from_rfc3339(timestamp_str)
         .map(|dt| dt.with_timezone(&Utc))
@@ -53,11 +84,13 @@ pub fn transform_to_mcp(event: Value, event_type: String) -> Value {
             warn!("Failed to parse timestamp '{}' for alert ID '{}'. Using current time.", timestamp_str, id);
             Utc::now()
         });
+    debug!(%timestamp, "Transformed: timestamp");
 
     let notes = "Data fetched via Wazuh API".to_string();
+    debug!(%notes, "Transformed: notes");
 
-    json!({
-        "protocol_version": "1.0",
+    let mcp_message = json!({
+        "protocolVersion": "1.0", // Match initialize response
         "source": "Wazuh",
         "timestamp": timestamp.to_rfc3339_opts(SecondsFormat::Secs, true),
         "event_type": event_type,
@@ -73,7 +106,9 @@ pub fn transform_to_mcp(event: Value, event_type: String) -> Value {
             "integration": "Wazuh-MCP",
             "notes": notes
         }
-    })
+    });
+    debug!(?mcp_message, "Exiting transform_to_mcp with result");
+    mcp_message
 }
 
 #[cfg(test)]
