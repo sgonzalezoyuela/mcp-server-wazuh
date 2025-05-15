@@ -6,98 +6,99 @@ A Rust-based server designed to bridge the gap between a Wazuh Security Informat
 
 Modern AI assistants like Claude can benefit significantly from real-time context about the user's environment. For security operations, this means providing relevant security alerts and events. Wazuh is a popular open-source SIEM, but its API output isn't directly consumable by systems expecting MCP format.
 
-This server acts as a middleware:
-1.  It connects to the Wazuh API.
-2.  Authenticates using credentials (fetching a JWT token).
-3.  Periodically fetches security alerts from Wazuh.
-4.  Transforms these alerts from Wazuh's native format into the standardized MCP JSON format.
-5.  Exposes a simple HTTP endpoint (`/mcp`) where clients like Claude Desktop can poll for the latest transformed security context.
+## Example Use Cases
+
+The Wazuh MCP Server, by bridging Wazuh's security data with MCP-compatible applications, unlocks several powerful use cases:
+
+*   **Delegated Alert Triage:** Automate alert categorization and prioritization via AI, focusing analyst attention on critical events.
+*   **Enhanced Alert Correlation:** Enrich alerts by correlating with CVEs, OSINT, and other threat intelligence for deeper context and risk assessment.
+*   **Dynamic Security Visualizations:** Generate on-demand reports and visualizations of Wazuh data to answer specific security questions.
+*   **Multilingual Security Operations:** Query Wazuh data and receive insights in multiple languages for global team accessibility.
+*   **Natural Language Data Interaction:** Query Wazuh data using natural language for intuitive access to security information.
+*   **Contextual Augmentation for Other Tools:** Use Wazuh data as context to enrich other MCP-enabled tools and AI assistants.
 
 ## Architecture
 
-The server facilitates communication between Claude Desktop (or any MCP client) and the Wazuh API.
+The server primarily facilitates communication between an application (e.g., an IDE extension or CLI tool) and the Wazuh MCP Server itself via stdio. The server can then interact with the Wazuh API as needed.
 
-```ascii
-+-----------------+        +--------------------+        +-----------------+
-| Claude Desktop  |        | Wazuh MCP Server   |        | Wazuh           |
-| (MCP Client)    |        | (This Application) |        | (SIEM)          |
-+-----------------+        +--------------------+        +-----------------+
-        |                          |                          |
-        |  1. GET /mcp Request     |                          |
-        |------------------------->|                          |
-        |                          |  2. Check/Refresh JWT    |
-        |                          |------------------------->| 3. Authenticate (if needed via API)
-        |                          |                          |
-        |                          |  4. JWT Response (if auth)|
-        |                          |<-------------------------|
-        |                          |                          |
-        |                          |  5. GET /wazuh-alerts-*_search (with JWT)
-        |                          |------------------------->| 6. Fetch Alerts (via API)
-        |                          |                          |
-        |                          |  7. Wazuh Alert Data     |
-        |                          |<-------------------------|
-        |                          |                          |
-        |                          |  8. Transform Data to MCP|
-        |                          |  (Internal Logic)        |
-        |                          |                          |
-        |  9. MCP JSON Response    |                          |
-        |<-------------------------|                          |
-        |                          |                          |
+```mermaid
+sequenceDiagram
+    participant ClientApp as Client Application (e.g., IDE Extension / Claude Desktop)
+    participant WazuhMCPServer as Wazuh MCP Server (this application)
+    participant WazuhAPI as Wazuh API
 
+    ClientApp->>+WazuhMCPServer: (stdio) MCP Initialize
+    WazuhMCPServer-->>-ClientApp: (stdout) MCP Initialized
+    
+    ClientApp->>+WazuhMCPServer: (stdio) MCP Request (tools/list)
+    WazuhMCPServer->>WazuhMCPServer: Parse MCP Request
+    WazuhMCPServer->>WazuhMCPServer: Process internally
+    WazuhMCPServer-->>-ClientApp: (stdout) MCP Response (available tools)
+    
+    ClientApp->>+WazuhMCPServer: (stdio) MCP Request (tools/call for wazuhAlerts)
+    WazuhMCPServer->>WazuhMCPServer: Parse MCP Request
+    WazuhMCPServer->>+WazuhAPI: Request Wazuh Alerts (with WAZUH_USER, WAZUH_PASS)
+    WazuhAPI-->>-WazuhMCPServer: Wazuh Alert Data (JSON)
+    WazuhMCPServer->>WazuhMCPServer: Transform Wazuh Alerts to MCP Format
+    WazuhMCPServer-->>-ClientApp: (stdout) MCP Response (alerts)
 ```
 
-**Data Flow:**
+**Data Flow (stdio focus):**
 
-1.  An MCP client (e.g., Claude Desktop) sends an HTTP GET request to the `/mcp` endpoint of this server.
-2.  The server checks if it has a valid JWT for the Wazuh API.
-3.  If the JWT is missing or expired, it authenticates with the Wazuh API using configured credentials (`WAZUH_USER`, `WAZUH_PASS`) via the `/security/user/authenticate` endpoint.
-4.  The Wazuh API returns a JWT.
-5.  The server uses the valid JWT to make a request to the Wazuh alerts search endpoint (e.g., `/wazuh-alerts-*_search`).
-6.  The Wazuh API executes the search (currently fetches all recent alerts).
-7.  The Wazuh API returns the alert data in its native JSON format.
-8.  The server's transformation logic (`src/mcp/transform.rs`) processes each alert, mapping Wazuh fields (like `rule.level`, `rule.description`, `agent.name`, `data`, `timestamp`) to the corresponding MCP fields (`severity`, `description`, `agent`, `data`, `timestamp`). It also sets default values for missing fields.
-9.  The server responds to the MCP client with a JSON array of transformed alerts in the MCP format.
+1.  An application (e.g., an IDE extension, a CLI tool) launches the Wazuh MCP Server as a child process.
+2.  The application sends MCP-formatted requests (commands) to the server's `stdin`.
+3.  The Wazuh MCP Server reads the command from `stdin`.
+4.  **Processing:**
+    *   The server parses the MCP command.
+    *   If the command requires fetching data from Wazuh (e.g., "get latest alerts"):
+        *   The server connects to the Wazuh API (authenticating if necessary using configured credentials like `WAZUH_USER`, `WAZUH_PASS`).
+        *   It fetches the required data (e.g., security alerts).
+        *   The server's transformation logic (`src/mcp/transform.rs`) processes each alert, mapping Wazuh fields to MCP fields.
+    *   If the command is internal (e.g., a status check specific to the MCP server), it processes it directly.
+5.  The server sends an MCP-formatted JSON response (e.g., transformed alerts, command acknowledgment, or error messages) to the application via its `stdout`.
+6.  The application reads and processes the MCP response from the server's `stdout`.
+
+This stdio interaction allows for tight integration with local development tools or other applications that can manage child processes. An optional HTTP endpoint (`/mcp`) may also be available for clients that prefer polling.
 
 ## Features
 
--   **Wazuh API Integration:** Connects securely to the Wazuh API.
--   **JWT Authentication:** Handles authentication with Wazuh using username/password to obtain a JWT.
--   **Automatic Token Refresh:** Monitors JWT validity and automatically re-authenticates when the token expires or is close to expiring. Retries API calls once upon receiving a 401 Unauthorized response.
--   **Alert Retrieval:** Fetches alerts from the Wazuh API (currently configured to retrieve all recent alerts via a `match_all` query).
+-   **Stdio Communication:** Interacts with client applications via `stdin` and `stdout` using the Model Context Protocol (MCP), suitable for integration with IDEs or CLI tools.
+-   **Wazuh API Integration:** Connects to the Wazuh API to fetch security data. Handles authentication using configured credentials.
+-   **Alert Retrieval:** Fetches alerts from the Wazuh API (e.g., can be configured to retrieve recent alerts).
 -   **MCP Transformation:** Converts Wazuh alert JSON objects into MCP v1.0 compliant JSON messages. This includes:
     -   Mapping Wazuh `rule.level` to MCP `severity` (e.g., 0-3 -> "low", 8-11 -> "high").
     -   Extracting `rule.description`, `id`, `timestamp`, `agent` details, and the `data` payload.
     -   Taking the first group from `rule.groups` as the MCP `category`.
     -   Handling potential differences in Wazuh response structure (e.g., presence or absence of `_source` nesting).
     -   Providing default values (e.g., "unknown_severity", "unknown_category", current time for invalid timestamps).
--   **HTTP Server:** Exposes endpoints using the Axum web framework.
+-   **Optional HTTP Server:** Can expose endpoints using the Axum web framework.
     -   `/mcp`: Serves the transformed MCP messages.
     -   `/health`: Provides a simple health check.
 -   **Configuration:** Easily configurable via environment variables or a `.env` file.
 -   **Containerization:** Includes a `Dockerfile` and `docker-compose.yml` for easy deployment.
--   **Logging:** Uses the `tracing` library for request and application logging (configurable via `RUST_LOG`).
+-   **Logging:** Uses the `tracing` library for application logging (configurable via `RUST_LOG`).
 
 ## Requirements
 
 -   Rust (latest stable recommended, see `Cargo.toml` for specific dependencies)
 -   A running Wazuh server (v4.x recommended) with the API enabled and accessible.
--   Network connectivity between this server and the Wazuh API.
+-   Network connectivity between this server and the Wazuh API (if API interaction is used).
 
 ## Configuration
 
 Configuration is managed through environment variables. A `.env` file can be placed in the project root for local development.
 
-| Variable          | Description                                       | Default     | Required |
-| ----------------- | ------------------------------------------------- | ----------- | -------- |
-| `WAZUH_HOST`      | Hostname or IP address of the Wazuh API server.   | `localhost` | Yes      |
-| `WAZUH_PORT`      | Port number for the Wazuh API.                    | `55000`     | Yes      |
-| `WAZUH_USER`      | Username for Wazuh API authentication.            | `admin`     | Yes      |
-| `WAZUH_PASS`      | Password for Wazuh API authentication.            | `admin`     | Yes      |
-| `VERIFY_SSL`      | Set to `true` to verify the Wazuh API's SSL cert. | `false`     | No       |
-| `MCP_SERVER_PORT` | Port for this MCP server to listen on.            | `8000`      | No       |
-| `RUST_LOG`        | Log level (e.g., `info`, `debug`, `trace`).       | `info`      | No       |
+| Variable          | Description                                       | Default     | Required (for API) |
+| ----------------- | ------------------------------------------------- | ----------- | ------------------ |
+| `WAZUH_HOST`      | Hostname or IP address of the Wazuh API server.   | `localhost` | Yes                |
+| `WAZUH_PORT`      | Port number for the Wazuh API.                    | `9200`      | Yes                |
+| `WAZUH_USER`      | Username for Wazuh API authentication.            | `admin`     | Yes                |
+| `WAZUH_PASS`      | Password for Wazuh API authentication.            | `admin`     | Yes                |
+| `VERIFY_SSL`      | Set to `true` to verify the Wazuh API's SSL cert. | `false`     | No                 |
+| `MCP_SERVER_PORT` | Port for this MCP server to listen on (if HTTP enabled). | `8000`  | No                 |
+| `RUST_LOG`        | Log level (e.g., `info`, `debug`, `trace`).       | `info`      | No                 |
 
-**Note on `VERIFY_SSL`:** For production environments, it is strongly recommended to set `VERIFY_SSL=true` and ensure proper certificate validation. Setting it to `false` disables certificate checks, which is insecure.
+**Note on `VERIFY_SSL`:** For production environments using the Wazuh API, it is strongly recommended to set `VERIFY_SSL=true` and ensure proper certificate validation. Setting it to `false` disables certificate checks, which is insecure.
 
 ## Building and Running
 
@@ -110,10 +111,10 @@ Configuration is managed through environment variables. A `.env` file can be pla
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/yourusername/mcp-server-wazuh.git # Replace with your repo URL
+    git clone https://github.com/yourusername/mcp-server-wazuh.git 
     cd mcp-server-wazuh
     ```
-2.  **Configure:**
+2.  **Configure (if using Wazuh API):**
     -   Copy the example environment file: `cp .env.example .env`
     -   Edit the `.env` file with your specific Wazuh API details (`WAZUH_HOST`, `WAZUH_PORT`, `WAZUH_USER`, `WAZUH_PASS`).
 3.  **Build:**
@@ -123,86 +124,192 @@ Configuration is managed through environment variables. A `.env` file can be pla
 4.  **Run:**
     ```bash
     cargo run
-    # Or use the run script:
+    # Or use the run script (which might set up stdio mode):
     # ./run.sh
     ```
-    The server will start listening on the port specified by `MCP_SERVER_PORT` (default 8000).
+    If the HTTP server is enabled, it will start listening on the port specified by `MCP_SERVER_PORT` (default 8000). Otherwise, it will operate in stdio mode.
 
 ### Docker Deployment
 
 1.  **Clone the repository** (if not already done).
-2.  **Configure:** Ensure you have a `.env` file with your Wazuh credentials in the project root, or set the environment variables directly in the `docker-compose.yml` or your deployment environment.
+2.  **Configure:** Ensure you have a `.env` file with your Wazuh credentials in the project root if using the API, or set the environment variables directly in the `docker-compose.yml` or your deployment environment.
 3.  **Build and Run:**
     ```bash
     docker-compose up --build -d
     ```
     This will build the Docker image and start the container in detached mode.
 
-## API Endpoints
+## Stdio Mode Operation
 
-### `GET /mcp`
+The server communicates via `stdin` and `stdout` using JSON-RPC 2.0 messages, adhering to the Model Context Protocol (MCP).
 
-Fetches the latest alerts from the configured Wazuh API, transforms them into MCP format, and returns them as a JSON array.
+Example interaction flow:
 
--   **Method:** `GET`
--   **Success Response:** `200 OK`
-    -   **Body:** `application/json` - An array of MCP message objects.
-    ```json
-    [
-      {
-        "protocol_version": "1.0",
-        "source": "Wazuh",
-        "timestamp": "2023-10-27T10:30:00Z", 
-        "event_type": "alert",
-        "context": {
-          "id": "wazuh_alert_id_1",
-          "category": "gdpr", 
-          "severity": "high", 
-          "description": "High severity rule triggered",
-          "agent": { 
-            "id": "001",
-            "name": "server-db"
-          },
-          "data": { 
-            "srcip": "1.2.3.4",
-            "dstport": "22"
-          }
-        },
-        "metadata": {
-          "integration": "Wazuh-MCP",
-          "notes": "Data fetched via Wazuh API"
-         
-        }
-      },
-      
-    ]
-    ```
--   **Error Responses:**
-    -   `401 Unauthorized`: If Wazuh authentication fails persistently.
-    -   `500 Internal Server Error`: If there's an issue fetching/parsing data from Wazuh, or an internal server problem.
-    -   `502 Bad Gateway`: If the server cannot connect to the Wazuh API or the API returns an unexpected error.
+1.  **Client Application (e.g., IDE extension) starts the `mcp-server-wazuh` process.**
 
-### `GET /health`
-
-A simple health check endpoint.
-
--   **Method:** `GET`
--   **Success Response:** `200 OK`
-    -   **Body:** `application/json`
+2.  **Client sends `initialize` request to server's `stdin`:**
     ```json
     {
-      "status": "ok",
-      "service": "wazuh-mcp-server",
-      "timestamp": "2023-10-27T12:00:00Z" 
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {
+          "sampling": {},
+          "roots": { "listChanged": true }
+        },
+        "clientInfo": {
+          "name": "mcp-inspector",
+          "version": "0.11.0"
+        }
+      }
     }
     ```
--   **Error Responses:** None expected for this endpoint itself, but the server might be unreachable if down.
+
+3.  **Server sends `initialize` response to client via `stdout`:**
+    (Capabilities shown are illustrative based on logs; actual capabilities might vary.)
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "result": {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {
+          "tools": {
+            "supported": true,
+            "definitions": [
+              {
+                "name": "wazuhAlerts",
+                "description": "Retrieves the latest security alerts from the Wazuh SIEM.",
+                "inputSchema": { "type": "object", "properties": {} },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "alerts": {
+                      "type": "array",
+                      "description": "A list of simplified alert objects.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string", "description": "The unique identifier of the alert." },
+                          "description": { "type": "string", "description": "The description of the rule that triggered the alert." }
+                        },
+                        "required": ["id", "description"]
+                      }
+                    }
+                  },
+                  "required": ["alerts"]
+                }
+              }
+            ]
+          },
+          "resources": { "supported": true },
+          "prompts": { "supported": true }
+        },
+        "serverInfo": {
+          "name": "Wazuh MCP Server",
+          "version": "0.1.0"
+        }
+      }
+    }
+    ```
+
+4.  **Client sends `notifications/initialized` to server's `stdin`:**
+    (This is a notification, so `id` is omitted by the client.)
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "method": "notifications/initialized"
+    }
+    ```
+
+5.  **Client requests available tools by sending `tools/list` to server's `stdin`:**
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "tools/list",
+      "params": {}
+    }
+    ```
+
+6.  **Server responds with the list of tools to client via `stdout`:**
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "tools": [
+          {
+            "name": "wazuhAlerts",
+            "description": "Retrieves the latest security alerts from the Wazuh SIEM.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "alerts": {
+                  "type": "array",
+                  "description": "A list of simplified alert objects.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string", "description": "The unique identifier of the alert." },
+                      "description": { "type": "string", "description": "The description of the rule that triggered the alert." }
+                    },
+                    "required": ["id", "description"]
+                  }
+                }
+              },
+              "required": ["alerts"]
+            }
+          }
+        ]
+      }
+    }
+    ```
+
+7.  **Client calls the `wazuhAlerts` tool by sending `tools/call` to server's `stdin`:**
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/call",
+      "params": {
+        "name": "wazuhAlerts",
+        "arguments": {}
+      }
+    }
+    ```
+
+8.  **Server receives on `stdin`, processes the `wazuhAlerts` call (which involves querying the Wazuh API and transforming the data as described elsewhere in this README).**
+
+9.  **Server sends `tools/call` response with transformed alerts to client via `stdout`:**
+    (Alert content is illustrative and simplified.)
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "result": {
+        "alerts": [
+          {
+            "id": "1747091815.1212763",
+            "description": "Attached USB Storage"
+          },
+          {
+            "id": "1747066333.1207112",
+            "description": "New dpkg (Debian Package) installed."
+          }
+          // ... other simplified alerts based on the tool's outputSchema
+        ]
+      }
+    }
 
 ## Running the All-in-One Demo (Wazuh + MCP Server)
 
-For a complete local demo environment that includes Wazuh (Indexer, Manager, Dashboard) and the Wazuh MCP Server pre-configured to connect to it, you can use the `docker-compose.all-in-one.yml` file.
+For a complete local demo environment that includes Wazuh (Indexer, Manager, Dashboard) and the Wazuh MCP Server pre-configured to connect to it (for HTTP mode testing), you can use the `docker-compose.all-in-one.yml` file.
 
-This setup is ideal for testing the end-to-end flow from Wazuh alerts to MCP messages.
+This setup is ideal for testing the end-to-end flow from Wazuh alerts to MCP messages via the HTTP interface.
 
 **1. Launch the Environment:**
 
@@ -215,7 +322,7 @@ docker-compose -f docker-compose.all-in-one.yml up -d
 This command will:
 - Download the necessary Wazuh and OpenSearch images (if not already present).
 - Start the Wazuh Indexer, Wazuh Manager, and Wazuh Dashboard services.
-- Build and start the Wazuh MCP Server.
+- Build and start the Wazuh MCP Server (in HTTP mode).
 - All services are configured to communicate with each other on an internal Docker network.
 
 **2. Accessing Services:**
@@ -225,7 +332,7 @@ This command will:
     *   Default Username: `admin`
     *   Default Password: `AdminPassword123!` (This is set by `WAZUH_INITIAL_PASSWORD` in the `wazuh-indexer` service).
 
-*   **Wazuh MCP Server:**
+*   **Wazuh MCP Server (HTTP Mode):**
     *   The MCP server will be running and accessible on port `8000` by default (or the port specified by `MCP_SERVER_PORT` if you've set it as an environment variable on your host machine before running docker-compose).
     *   Example MCP endpoint: `http://localhost:8000/mcp`
     *   Example Health endpoint: `http://localhost:8000/health`
@@ -251,38 +358,49 @@ To stop and remove volumes (deleting Wazuh data):
 docker-compose -f docker-compose.all-in-one.yml down -v
 ```
 
-This approach simplifies setup by bundling all necessary components and their configurations.
+This approach simplifies setup by bundling all necessary components and their configurations for HTTP mode testing.
 
-## Claude Desktop Integration
+## Claude Desktop Configuration
 
-To use this Wazuh MCP Server with Claude Desktop (or any other MCP-compatible client), you need to configure the client to poll the `/mcp` endpoint exposed by this server.
+To integrate this server with the Claude Desktop application, you need to configure it in your `claude_desktop_config.json` file. Add an entry for the Wazuh server under `mcpServers` like the example below:
 
-1.  **Ensure the Wazuh MCP Server is running** and accessible from the machine where Claude Desktop is operating. This might involve:
-    *   Running the server locally (e.g., `cargo run` or via Docker, including the all-in-one setup described above).
-    *   Deploying the server to a reachable host.
-2.  **Identify the server's address and port.**
-    *   If using the all-in-one demo: `http://localhost:8000/mcp` (or your `MCP_SERVER_PORT`).
-    *   If running `mcp-server` standalone: `http://localhost:8000` by default, or `http://<your-server-ip-or-hostname>:<MCP_SERVER_PORT>` if deployed elsewhere. The `MCP_SERVER_PORT` is configurable via environment variables (defaults to `8000`).
-3.  **Configure Claude Desktop:**
-    *   In Claude Desktop's settings or configuration area for external context sources, add a new MCP endpoint.
-    *   Set the URL to `http://<server_address>:<port>/mcp`. For example:
-        *   If running the all-in-one demo or locally: `http://localhost:8000/mcp`
-        *   If running on a remote server `192.168.1.100` on port `8080`: `http://192.168.1.100:8080/mcp`
-4.  **Verify Firewall Rules:** Ensure that any firewalls between Claude Desktop and the Wazuh MCP Server allow traffic on the configured `MCP_SERVER_PORT`.
+```json
+{
+  "mcpServers": {
+    "wazuh": {
+      "command": "/full/path/to/your/mcp-server-wazuh/target/release/mcp-server-wazuh",
+      "args": [],
+      "env": {
+        "WAZUH_HOST": "wazuh.example.com",
+        "WAZUH_PASS": "aVeryS3cureP@ssw0rd",
+        "WAZUH_PORT": "9200",
+        "RUST_LOG": "info,mcp_server_wazuh=debug"
+      }
+    }
+  }
+}
+```
 
-Once configured, Claude Desktop should start polling the `/mcp` endpoint periodically to fetch the latest Wazuh security alerts in MCP format.
+**Configuration Notes:**
+
+*   **`command`**: The absolute path to your compiled `mcp-server-wazuh` executable (e.g., typically found in `target/release/mcp-server-wazuh` after a release build).
+*   **`args`**: An array of arguments to pass to the command, if any.
+*   **`env.WAZUH_HOST`**: The hostname or IP address of your Wazuh Indexer or API endpoint.
+*   **`env.WAZUH_PASS`**: The password for authenticating with the Wazuh service.
+*   **`env.WAZUH_PORT`**: The port number for the Wazuh service. Common ports are `9200` for direct Indexer access or `55000` for the Wazuh API. Adjust this according to your specific Wazuh setup and how this server is configured to connect.
+*   **`env.RUST_LOG`**: Optional. Sets the logging level for the server. Example: `info,mcp_server_wazuh=debug` provides general info logging and debug level for this specific crate.
 
 ## Development & Testing
 
 -   **Code Style:** Uses standard Rust formatting (`cargo fmt`).
 -   **Linting:** Uses Clippy (`cargo clippy`).
--   **Testing:** Contains unit tests for transformation logic and integration tests using a mock Wazuh API server (`httpmock`) and a test MCP client.
+-   **Testing:** Contains unit tests for transformation logic and integration tests. For stdio, tests might involve piping input/output to a test harness. For HTTP, tests use a mock Wazuh API server (`httpmock`) and a test MCP client.
     ```bash
     # Run all tests
     cargo test
 
-    # Run specific integration test
-    cargo test --test integration_test
+    # Run specific integration test (example for HTTP tests)
+    # cargo test --test integration_test
 
     # Run tests with detailed logging
     RUST_LOG=debug cargo test
@@ -292,3 +410,4 @@ Once configured, Claude Desktop should start polling the `/mcp` endpoint periodi
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+

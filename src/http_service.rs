@@ -88,7 +88,6 @@ async fn post_mcp_data(
 
     let result = get_mcp_data(State(app_state)).await;
 
-    // Log the response
     let response_str = match &result {
         Ok(json_response) => serde_json::to_string(&json_response.0).unwrap_or_else(|e| {
             error!("Failed to serialize POST response for logging: {}", e);
@@ -112,7 +111,6 @@ async fn post_mcp_data(
     result
 }
 
-// API Error handling
 #[derive(Debug)]
 pub enum ApiError {
     BadRequest(String),

@@ -58,7 +58,6 @@ pub struct McpMessage {
     pub metadata: Value,
 }
 
-// --- JSON-RPC Structures (client-side definitions) ---
 #[derive(Serialize, Debug)]
 struct JsonRpcRequest<T: Serialize> {
     jsonrpc: String,
@@ -117,7 +116,7 @@ enum ClientMode {
 
 pub struct McpClient {
     mode: ClientMode,
-    child_process: Option<Child>, // Manages the lifetime of the child process
+    child_process: Option<Child>,
     request_id_counter: AtomicUsize,
 }
 
@@ -374,7 +373,6 @@ mod tests {
 
         let mut client = McpClient::new_http(server.url("")); // Use new_http
 
-        // Use provide_context with None params for equivalent of old get_mcp_data
         let result = client.provide_context(None).await.unwrap();
 
         assert_eq!(result.len(), 1);
@@ -390,7 +388,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_client_http_health_check_equivalent() {
-        // Renamed
         let server = MockServer::start();
 
         server.mock(|when, then| {

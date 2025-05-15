@@ -5,7 +5,6 @@ use tracing::{debug, error, info};
 use crate::mcp::protocol::{error_codes, JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use crate::AppState;
 
-// Structure to parse the parameters for a 'tools/call' request
 #[derive(serde::Deserialize, Debug)]
 struct ToolCallParams {
     #[serde(rename = "name")]
@@ -85,7 +84,6 @@ impl McpServerCore {
         debug!("Handling initialize request");
 
 
-        // Define the wazuhAlertSummary tool - simpler with no output schema
         let wazuh_alert_summary_tool = crate::mcp::protocol::ToolDefinition {
             name: "wazuhAlertSummary".to_string(),
             description: Some("Returns a text summary of all Wazuh alerts.".to_string()),
@@ -98,7 +96,6 @@ impl McpServerCore {
             output_schema: None,
         };
 
-        // Use the protocol structs for better type safety and structure
         let result = crate::mcp::protocol::InitializeResult {
             protocol_version: "2024-11-05".to_string(),
             capabilities: crate::mcp::protocol::Capabilities {
@@ -126,10 +123,8 @@ impl McpServerCore {
     async fn handle_provide_context(&self, request: JsonRpcRequest) -> String {
         debug!("Handling provideContext request");
 
-        // Lock the Wazuh client to make API calls
         let mut wazuh_client = self.app_state.wazuh_client.lock().await;
 
-        // Get alerts from Wazuh
         match wazuh_client.get_alerts().await {
             Ok(alerts) => {
                 let mcp_messages: Vec<Value> = alerts
@@ -196,7 +191,6 @@ impl McpServerCore {
             }
         };
 
-        // Currently, no resources are supported for reading
         error!("Unsupported URI for resources/read: {}", params.uri);
         self.create_error_response(
             error_codes::INVALID_PARAMS, 
@@ -206,7 +200,6 @@ impl McpServerCore {
         )
     }
 
-    // Generic handler for executing tools via 'tools/call'
     async fn handle_tool_call(&self, request: JsonRpcRequest) -> String {
         debug!("Handling tools/call request: {:?}", request.params);
 
@@ -235,7 +228,6 @@ impl McpServerCore {
             }
         };
 
-        // Dispatch based on the tool name
         match params.name.as_str() {
             "wazuhAlertSummary" => {
                 info!("Dispatching tools/call to wazuhAlertSummary handler");
@@ -255,7 +247,6 @@ impl McpServerCore {
     }
 
 
-    // Handler for listing available tools
     async fn handle_list_tools(&self, request: JsonRpcRequest) -> String {
         debug!("Handling tools/list request");
 
@@ -334,7 +325,6 @@ impl McpServerCore {
         }
     }
 
-    // Handler for the wazuhAlertSummary tool
     async fn handle_wazuh_alert_summary_tool(&self, request: JsonRpcRequest) -> String {
         debug!("Handling tools/wazuhAlertSummary request. Params: {:?}", request.params);
 
