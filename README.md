@@ -6,6 +6,8 @@ A Rust-based server designed to bridge the gap between a Wazuh Security Informat
 
 Modern AI assistants like Claude can benefit significantly from real-time context about the user's environment. For security operations, this means providing relevant security alerts and events. Wazuh is a popular open-source SIEM, but its API output isn't directly consumable by systems expecting MCP format.
 
+![](media/wazuh-alerts-1.png)
+
 ## Example Use Cases
 
 The Wazuh MCP Server, by bridging Wazuh's security data with MCP-compatible applications, unlocks several powerful use cases:
