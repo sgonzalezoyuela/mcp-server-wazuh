@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*' # Trigger on version tags like v0.1.0
 
+permissions:
+  contents: write # Needed to create releases
+
 jobs:
   create_release:
     name: Create Release
