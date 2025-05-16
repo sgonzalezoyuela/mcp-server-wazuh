@@ -19,49 +19,6 @@ The Wazuh MCP Server, by bridging Wazuh's security data with MCP-compatible appl
 *   **Natural Language Data Interaction:** Query Wazuh data using natural language for intuitive access to security information.
 *   **Contextual Augmentation for Other Tools:** Use Wazuh data as context to enrich other MCP-enabled tools and AI assistants.
 
-## Architecture
-
-The server primarily facilitates communication between an application (e.g., an IDE extension or CLI tool) and the Wazuh MCP Server itself via stdio. The server can then interact with the Wazuh API as needed.
-
-```mermaid
-sequenceDiagram
-    participant ClientApp as Client Application (e.g., IDE Extension / Claude Desktop)
-    participant WazuhMCPServer as Wazuh MCP Server (this application)
-    participant WazuhAPI as Wazuh API
-
-    ClientApp->>+WazuhMCPServer: (stdio) MCP Initialize
-    WazuhMCPServer-->>-ClientApp: (stdout) MCP Initialized
-    
-    ClientApp->>+WazuhMCPServer: (stdio) MCP Request (tools/list)
-    WazuhMCPServer->>WazuhMCPServer: Parse MCP Request
-    WazuhMCPServer->>WazuhMCPServer: Process internally
-    WazuhMCPServer-->>-ClientApp: (stdout) MCP Response (available tools)
-    
-    ClientApp->>+WazuhMCPServer: (stdio) MCP Request (tools/call for wazuhAlerts)
-    WazuhMCPServer->>WazuhMCPServer: Parse MCP Request
-    WazuhMCPServer->>+WazuhAPI: Request Wazuh Alerts (with WAZUH_USER, WAZUH_PASS)
-    WazuhAPI-->>-WazuhMCPServer: Wazuh Alert Data (JSON)
-    WazuhMCPServer->>WazuhMCPServer: Transform Wazuh Alerts to MCP Format
-    WazuhMCPServer-->>-ClientApp: (stdout) MCP Response (alerts)
-```
-
-**Data Flow (stdio focus):**
-
-1.  An application (e.g., an IDE extension, a CLI tool) launches the Wazuh MCP Server as a child process.
-2.  The application sends MCP-formatted requests (commands) to the server's `stdin`.
-3.  The Wazuh MCP Server reads the command from `stdin`.
-4.  **Processing:**
-    *   The server parses the MCP command.
-    *   If the command requires fetching data from Wazuh (e.g., "get latest alerts"):
-        *   The server connects to the Wazuh API (authenticating if necessary using configured credentials like `WAZUH_USER`, `WAZUH_PASS`).
-        *   It fetches the required data (e.g., security alerts).
-        *   The server's transformation logic (`src/mcp/transform.rs`) processes each alert, mapping Wazuh fields to MCP fields.
-    *   If the command is internal (e.g., a status check specific to the MCP server), it processes it directly.
-5.  The server sends an MCP-formatted JSON response (e.g., transformed alerts, command acknowledgment, or error messages) to the application via its `stdout`.
-6.  The application reads and processes the MCP response from the server's `stdout`.
-
-This stdio interaction allows for tight integration with local development tools or other applications that can manage child processes. An optional HTTP endpoint (`/mcp`) may also be available for clients that prefer polling.
-
 ## Features
 
 -   **Stdio Communication:** Interacts with client applications via `stdin` and `stdout` using the Model Context Protocol (MCP), suitable for integration with IDEs or CLI tools.
@@ -136,6 +93,50 @@ Configuration is managed through environment variables. A `.env` file can be pla
 | `RUST_LOG`        | Log level (e.g., `info`, `debug`, `trace`).       | `info`      | No                 |
 
 **Note on `VERIFY_SSL`:** For production environments using the Wazuh API, it is strongly recommended to set `VERIFY_SSL=true` and ensure proper certificate validation. Setting it to `false` disables certificate checks, which is insecure.
+
+## Architecture
+
+The server primarily facilitates communication between an application (e.g., an IDE extension or CLI tool) and the Wazuh MCP Server itself via stdio. The server can then interact with the Wazuh API as needed.
+
+```mermaid
+sequenceDiagram
+    participant ClientApp as Client Application (e.g., IDE Extension / Claude Desktop)
+    participant WazuhMCPServer as Wazuh MCP Server (this application)
+    participant WazuhAPI as Wazuh API
+
+    ClientApp->>+WazuhMCPServer: (stdio) MCP Initialize
+    WazuhMCPServer-->>-ClientApp: (stdout) MCP Initialized
+    
+    ClientApp->>+WazuhMCPServer: (stdio) MCP Request (tools/list)
+    WazuhMCPServer->>WazuhMCPServer: Parse MCP Request
+    WazuhMCPServer->>WazuhMCPServer: Process internally
+    WazuhMCPServer-->>-ClientApp: (stdout) MCP Response (available tools)
+    
+    ClientApp->>+WazuhMCPServer: (stdio) MCP Request (tools/call for wazuhAlerts)
+    WazuhMCPServer->>WazuhMCPServer: Parse MCP Request
+    WazuhMCPServer->>+WazuhAPI: Request Wazuh Alerts (with WAZUH_USER, WAZUH_PASS)
+    WazuhAPI-->>-WazuhMCPServer: Wazuh Alert Data (JSON)
+    WazuhMCPServer->>WazuhMCPServer: Transform Wazuh Alerts to MCP Format
+    WazuhMCPServer-->>-ClientApp: (stdout) MCP Response (alerts)
+```
+
+**Data Flow (stdio focus):**
+
+1.  An application (e.g., an IDE extension, a CLI tool) launches the Wazuh MCP Server as a child process.
+2.  The application sends MCP-formatted requests (commands) to the server's `stdin`.
+3.  The Wazuh MCP Server reads the command from `stdin`.
+4.  **Processing:**
+    *   The server parses the MCP command.
+    *   If the command requires fetching data from Wazuh (e.g., "get latest alerts"):
+        *   The server connects to the Wazuh API (authenticating if necessary using configured credentials like `WAZUH_USER`, `WAZUH_PASS`).
+        *   It fetches the required data (e.g., security alerts).
+        *   The server's transformation logic (`src/mcp/transform.rs`) processes each alert, mapping Wazuh fields to MCP fields.
+    *   If the command is internal (e.g., a status check specific to the MCP server), it processes it directly.
+5.  The server sends an MCP-formatted JSON response (e.g., transformed alerts, command acknowledgment, or error messages) to the application via its `stdout`.
+6.  The application reads and processes the MCP response from the server's `stdout`.
+
+This stdio interaction allows for tight integration with local development tools or other applications that can manage child processes. An optional HTTP endpoint (`/mcp`) may also be available for clients that prefer polling.
+
 
 
 ## Building
