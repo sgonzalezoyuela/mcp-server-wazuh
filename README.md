@@ -82,9 +82,44 @@ This stdio interaction allows for tight integration with local development tools
 
 ## Requirements
 
--   Rust (latest stable recommended, see `Cargo.toml` for specific dependencies)
+-   An MCP (Model Context Protocol) compatible LLM client (e.g., Claude Desktop)
 -   A running Wazuh server (v4.x recommended) with the API enabled and accessible.
 -   Network connectivity between this server and the Wazuh API (if API interaction is used).
+
+## Installation
+
+1.  **Download the Binary:**
+    *   Go to the [Releases page](https://github.com/gbrigandi/mcp-server-wazuh/releases) of the `mcp-server-wazuh` GitHub repository.
+    *   Download the appropriate binary for your operating system (e.g., `mcp-server-wazuh-linux-amd64`, `mcp-server-wazuh-macos-amd64`, `mcp-server-wazuh-windows-amd64.exe`).
+    *   Make the downloaded binary executable (e.g., `chmod +x mcp-server-wazuh-linux-amd64`).
+    *   (Optional) Rename it to something simpler like `mcp-server-wazuh` and move it to a directory in your system's `PATH` for easier access.
+
+2.  **Configure Your LLM Client:**
+    *   The method for configuring your LLM client will vary depending on the client itself.
+    *   For clients that support MCP (Model Context Protocol), you will typically need to point the client to the path of the downloaded `mcp-server-wazuh` executable.
+    *   **Example for Claude Desktop:**
+        Refer to the [Claude Desktop Configuration](#claude-desktop-configuration) section for detailed instructions on how to set the `command` path and environment variables in your `claude_desktop_config.json`. You will replace the example path with the actual path to your downloaded binary.
+
+        For instance, if you downloaded `mcp-server-wazuh-macos-amd64` to `/usr/local/bin/mcp-server-wazuh`, your `claude_desktop_config.json` might look like:
+        ```json
+        {
+          "mcpServers": {
+            "wazuh": {
+              "command": "/usr/local/bin/mcp-server-wazuh",
+              "args": [],
+              "env": {
+                "WAZUH_HOST": "your_wazuh_host",
+                "WAZUH_PASS": "your_wazuh_password",
+                "WAZUH_PORT": "9200", 
+                "RUST_LOG": "info"
+              }
+            }
+          }
+        }
+        ```
+    *   Ensure you also configure any necessary environment variables for the server to connect to your Wazuh instance (e.g., `WAZUH_HOST`, `WAZUH_PASS`, `WAZUH_PORT`), as shown in the example above and detailed in the [Configuration](#configuration) section. These can often be set within the LLM client's configuration for the MCP server.
+
+Once configured, your LLM client should be able to launch and communicate with the `mcp-server-wazuh` to access Wazuh security data.
 
 ## Configuration
 
@@ -102,7 +137,8 @@ Configuration is managed through environment variables. A `.env` file can be pla
 
 **Note on `VERIFY_SSL`:** For production environments using the Wazuh API, it is strongly recommended to set `VERIFY_SSL=true` and ensure proper certificate validation. Setting it to `false` disables certificate checks, which is insecure.
 
-## Building and Running
+
+## Building
 
 ### Prerequisites
 
@@ -113,7 +149,7 @@ Configuration is managed through environment variables. A `.env` file can be pla
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/yourusername/mcp-server-wazuh.git 
+    git clone https://github.com/gbrigandi/mcp-server-wazuh.git 
     cd mcp-server-wazuh
     ```
 2.  **Configure (if using Wazuh API):**
