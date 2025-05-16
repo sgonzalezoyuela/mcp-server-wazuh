@@ -378,38 +378,7 @@ To stop and remove volumes (deleting Wazuh data):
 ```bash
 docker-compose -f docker-compose.all-in-one.yml down -v
 ```
-
 This approach simplifies setup by bundling all necessary components and their configurations for HTTP mode testing.
-
-## Claude Desktop Configuration
-
-To integrate this server with the Claude Desktop application, you need to configure it in your `claude_desktop_config.json` file. Add an entry for the Wazuh server under `mcpServers` like the example below:
-
-```json
-{
-  "mcpServers": {
-    "wazuh": {
-      "command": "/full/path/to/your/mcp-server-wazuh/target/release/mcp-server-wazuh",
-      "args": [],
-      "env": {
-        "WAZUH_HOST": "wazuh.example.com",
-        "WAZUH_PASS": "aVeryS3cureP@ssw0rd",
-        "WAZUH_PORT": "9200",
-        "RUST_LOG": "info,mcp_server_wazuh=debug"
-      }
-    }
-  }
-}
-```
-
-**Configuration Notes:**
-
-*   **`command`**: The absolute path to your compiled `mcp-server-wazuh` executable (e.g., typically found in `target/release/mcp-server-wazuh` after a release build).
-*   **`args`**: An array of arguments to pass to the command, if any.
-*   **`env.WAZUH_HOST`**: The hostname or IP address of your Wazuh Indexer or API endpoint.
-*   **`env.WAZUH_PASS`**: The password for authenticating with the Wazuh service.
-*   **`env.WAZUH_PORT`**: The port number for the Wazuh service. Common ports are `9200` for direct Indexer access or `55000` for the Wazuh API. Adjust this according to your specific Wazuh setup and how this server is configured to connect.
-*   **`env.RUST_LOG`**: Optional. Sets the logging level for the server. Example: `info,mcp_server_wazuh=debug` provides general info logging and debug level for this specific crate.
 
 ## Development & Testing
 
