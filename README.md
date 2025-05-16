@@ -19,24 +19,6 @@ The Wazuh MCP Server, by bridging Wazuh's security data with MCP-compatible appl
 *   **Natural Language Data Interaction:** Query Wazuh data using natural language for intuitive access to security information.
 *   **Contextual Augmentation for Other Tools:** Use Wazuh data as context to enrich other MCP-enabled tools and AI assistants.
 
-## Features
-
--   **Stdio Communication:** Interacts with client applications via `stdin` and `stdout` using the Model Context Protocol (MCP), suitable for integration with IDEs or CLI tools.
--   **Wazuh API Integration:** Connects to the Wazuh API to fetch security data. Handles authentication using configured credentials.
--   **Alert Retrieval:** Fetches alerts from the Wazuh API (e.g., can be configured to retrieve recent alerts).
--   **MCP Transformation:** Converts Wazuh alert JSON objects into MCP v1.0 compliant JSON messages. This includes:
-    -   Mapping Wazuh `rule.level` to MCP `severity` (e.g., 0-3 -> "low", 8-11 -> "high").
-    -   Extracting `rule.description`, `id`, `timestamp`, `agent` details, and the `data` payload.
-    -   Taking the first group from `rule.groups` as the MCP `category`.
-    -   Handling potential differences in Wazuh response structure (e.g., presence or absence of `_source` nesting).
-    -   Providing default values (e.g., "unknown_severity", "unknown_category", current time for invalid timestamps).
--   **Optional HTTP Server:** Can expose endpoints using the Axum web framework.
-    -   `/mcp`: Serves the transformed MCP messages.
-    -   `/health`: Provides a simple health check.
--   **Configuration:** Easily configurable via environment variables or a `.env` file.
--   **Containerization:** Includes a `Dockerfile` and `docker-compose.yml` for easy deployment.
--   **Logging:** Uses the `tracing` library for application logging (configurable via `RUST_LOG`).
-
 ## Requirements
 
 -   An MCP (Model Context Protocol) compatible LLM client (e.g., Claude Desktop)
