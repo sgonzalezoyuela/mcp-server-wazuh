@@ -27,36 +27,55 @@ The Wazuh MCP Server, by bridging Wazuh's security data with MCP-compatible appl
 
 ## Installation
 
+### Option 1: Download Pre-built Binary (Recommended)
+
 1.  **Download the Binary:**
     *   Go to the [Releases page](https://github.com/gbrigandi/mcp-server-wazuh/releases) of the `mcp-server-wazuh` GitHub repository.
     *   Download the appropriate binary for your operating system (e.g., `mcp-server-wazuh-linux-amd64`, `mcp-server-wazuh-macos-amd64`, `mcp-server-wazuh-windows-amd64.exe`).
     *   Make the downloaded binary executable (e.g., `chmod +x mcp-server-wazuh-linux-amd64`).
     *   (Optional) Rename it to something simpler like `mcp-server-wazuh` and move it to a directory in your system's `PATH` for easier access.
 
-2.  **Configure Your LLM Client:**
-    *   The method for configuring your LLM client will vary depending on the client itself.
-    *   For clients that support MCP (Model Context Protocol), you will typically need to point the client to the path of the downloaded `mcp-server-wazuh` executable.
-    *   **Example for Claude Desktop:**
-        Refer to the [Claude Desktop Configuration](#claude-desktop-configuration) section for detailed instructions on how to set the `command` path and environment variables in your `claude_desktop_config.json`. You will replace the example path with the actual path to your downloaded binary.
+### Option 2: Build from Source
 
-        For instance, if you downloaded `mcp-server-wazuh-macos-amd64` to `/usr/local/bin/mcp-server-wazuh`, your `claude_desktop_config.json` might look like:
-        ```json
-        {
-          "mcpServers": {
-            "wazuh": {
-              "command": "/usr/local/bin/mcp-server-wazuh",
-              "args": [],
-              "env": {
-                "WAZUH_HOST": "your_wazuh_host",
-                "WAZUH_PASS": "your_wazuh_password",
-                "WAZUH_PORT": "9200", 
-                "RUST_LOG": "info"
-              }
-            }
-          }
-        }
-        ```
-    *   Ensure you also configure any necessary environment variables for the server to connect to your Wazuh instance (e.g., `WAZUH_HOST`, `WAZUH_PASS`, `WAZUH_PORT`), as shown in the example above and detailed in the [Configuration](#configuration) section. These can often be set within the LLM client's configuration for the MCP server.
+1.  **Prerequisites:**
+    *   Install Rust: [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+
+2.  **Build:**
+    ```bash
+    git clone https://github.com/gbrigandi/mcp-server-wazuh.git
+    cd mcp-server-wazuh
+    cargo build --release
+    ```
+    The binary will be available at `target/release/mcp-server-wazuh`.
+
+### Configure Your LLM Client
+
+The method for configuring your LLM client will vary depending on the client itself. For clients that support MCP (Model Context Protocol), you will typically need to point the client to the path of the `mcp-server-wazuh` executable.
+
+**Example for Claude Desktop:**
+
+Configure your `claude_desktop_config.json` file:
+
+```json
+{
+  "mcpServers": {
+    "wazuh": {
+      "command": "/path/to/mcp-server-wazuh",
+      "args": [],
+      "env": {
+        "WAZUH_HOST": "your_wazuh_host",
+        "WAZUH_USER": "admin",
+        "WAZUH_PASS": "your_wazuh_password",
+        "WAZUH_PORT": "9200",
+        "VERIFY_SSL": "false",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
+```
+
+Replace `/path/to/mcp-server-wazuh` with the actual path to your binary and configure the environment variables as detailed in the [Configuration](#configuration) section.
 
 Once configured, your LLM client should be able to launch and communicate with the `mcp-server-wazuh` to access Wazuh security data.
 
@@ -78,7 +97,7 @@ Configuration is managed through environment variables. A `.env` file can be pla
 
 ## Architecture
 
-The server primarily facilitates communication between an application (e.g., an IDE extension or CLI tool) and the Wazuh MCP Server itself via stdio. The server can then interact with the Wazuh API as needed.
+The server is built using the [rmcp](https://crates.io/crates/rmcp) framework and facilitates communication between MCP clients (e.g., Claude Desktop, IDE extensions) and the Wazuh MCP Server via stdio transport. The server interacts with the Wazuh Indexer API to fetch security alerts and other data.
 
 ```mermaid
 sequenceDiagram
@@ -201,26 +220,16 @@ Example interaction flow:
             "supported": true,
             "definitions": [
               {
-                "name": "wazuhAlerts",
-                "description": "Retrieves the latest security alerts from the Wazuh SIEM.",
-                "inputSchema": { "type": "object", "properties": {} },
-                "outputSchema": {
+                "name": "get_wazuh_alert_summary",
+                "description": "Retrieves a summary of Wazuh security alerts. Returns formatted alert information including ID, timestamp, and description.",
+                "inputSchema": {
                   "type": "object",
                   "properties": {
-                    "alerts": {
-                      "type": "array",
-                      "description": "A list of simplified alert objects.",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": { "type": "string", "description": "The unique identifier of the alert." },
-                          "description": { "type": "string", "description": "The description of the rule that triggered the alert." }
-                        },
-                        "required": ["id", "description"]
-                      }
+                    "limit": {
+                      "type": "integer",
+                      "description": "Maximum number of alerts to retrieve (default: 100)"
                     }
-                  },
-                  "required": ["alerts"]
+                  }
                 }
               }
             ]

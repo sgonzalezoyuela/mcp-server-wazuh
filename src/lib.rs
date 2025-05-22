@@ -1,13 +1,8 @@
-use crate::wazuh::client::WazuhIndexerClient;
-use tokio::sync::Mutex;
+// This file is kept for compatibility with existing tests and binaries
+// The main MCP server functionality has been moved to main.rs using the rmcp framework
 
-pub mod http_service;
-pub mod logging_utils;
-pub mod mcp;
-pub mod stdio_service;
 pub mod wazuh;
 
-#[derive(Debug)]
-pub struct AppState {
-    pub wazuh_client: Mutex<WazuhIndexerClient>,
-}
+// Re-export for backward compatibility
+pub use wazuh::client::WazuhIndexerClient;
+pub use wazuh::error::WazuhApiError;

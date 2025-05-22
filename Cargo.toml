@@ -4,23 +4,23 @@ version = "0.1.0"
 edition = "2021"
 description = "Wazuh SIEM MCP Server"
 authors = ["Gianluca Brigandi <gbrigand@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/gbrigandi/mcp-server-wazuh"
+readme = "README.md"
 
 [dependencies]
-tokio = { version = "1.45", features = ["full"] }
-axum = "0.8"
+rmcp = { version = "0.1.5", features = ["server", "transport-io"] }
+tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+schemars = "0.8"
+clap = { version = "4.5", features = ["derive"] }
 dotenv = "0.15"
 thiserror = "2.0"
-jsonwebtoken = "9.3"
-tower-http = { version = "0.6", features = ["trace"] }
-async-trait = "0.1"
-anyhow = "1.0"
-clap = { version = "4.5", features = ["derive", "env"] }
 
 [dev-dependencies]
 mockito = "1.7"
@@ -31,7 +31,8 @@ once_cell = "1.21"
 async-trait = "0.1"
 regex = "1.11"
 
-[[bin]]
-name = "mcp_client_cli"
-path = "tests/mcp_client_cli.rs"
+# Test binaries are disabled for now due to dependency conflicts
+# [[bin]]
+# name = "mcp_client_cli"
+# path = "tests/mcp_client_cli.rs"
 

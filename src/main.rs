@@ -1,187 +1,248 @@
-use std::env;
-use std::net::SocketAddr;
+//
+// Purpose:
+//
+// This Rust application implements an MCP (Model Context Protocol) server that acts as a
+// bridge to a Wazuh instance. It exposes various Wazuh functionalities as tools that can
+// be invoked by MCP clients (e.g., AI models, automation scripts).
+//
+// Structure:
+// - `main()`: Entry point of the application. Initializes logging (tracing),
+//   sets up the `WazuhToolsServer`, and starts the MCP server using either stdio or HTTP-SSE transport.
+//
+// - `WazuhToolsServer`: The core struct that implements the `rmcp::ServerHandler` trait
+//   and the `#[tool(tool_box)]` attribute.
+//   - It holds the configuration for connecting to the Wazuh Indexer API.
+//   - Its methods, decorated with `#[tool(...)]`, define the actual tools available
+//     to MCP clients (e.g., `get_wazuh_alert_summary`).
+//
+// - Tool Parameter Structs (e.g., `GetAlertSummaryParams`):
+//   - These structs define the expected input parameters for each tool.
+//   - They use `serde::Deserialize` for parsing input and `schemars::JsonSchema`
+//     for generating a schema that MCP clients can use to understand how to call the tools.
+//
+// - `wazuh` module:
+//   - `WazuhIndexerClient`: Handles communication with the Wazuh Indexer API.
+//   - Provides methods to fetch alerts and other security data from Wazuh.
+//
+// Workflow:
+// 1. Server starts and listens for MCP requests on stdio or HTTP-SSE.
+// 2. MCP client sends a `call_tool` request.
+// 3. `WazuhToolsServer` dispatches to the appropriate tool method based on the tool name.
+// 4. The tool method parses parameters, interacts with the Wazuh client to fetch data.
+// 5. The result (success with data or error) is packaged into a `CallToolResult`
+//    and sent back to the MCP client.
+//
+// Configuration:
+// The server requires `WAZUH_HOST`, `WAZUH_PORT`, `WAZUH_USER`, `WAZUH_PASS`, and `VERIFY_SSL`
+// environment variables to connect to the Wazuh instance. Logging is controlled by `RUST_LOG`.
+
+use rmcp::{
+    Error as McpError, ServerHandler, ServiceExt,
+    model::{
+        CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    },
+    schemars, tool,
+    transport::stdio,
+};
+use serde_json::json;
 use std::sync::Arc;
-
+use std::env;
+use clap::Parser;
 use dotenv::dotenv;
-use std::backtrace::Backtrace;
-use tokio::sync::{oneshot, Mutex};
-use tracing::{debug, error, info, Level};
-use tracing_subscriber::EnvFilter;
 
-// Use components from the library crate
-use mcp_server_wazuh::http_service::create_http_router;
-use mcp_server_wazuh::stdio_service::run_stdio_service;
-use mcp_server_wazuh::wazuh::client::WazuhIndexerClient;
-use mcp_server_wazuh::AppState;
+mod wazuh {
+    pub mod client;
+    pub mod error;
+}
 
-#[tokio::main]
-async fn main() {
-    dotenv().ok();
+use wazuh::client::WazuhIndexerClient;
 
-    // Set a custom panic hook to ensure panics are logged
-    std::panic::set_hook(Box::new(|panic_info| {
-        // Using eprintln directly as tracing might not be available or working during a panic
-        eprintln!(
-            "\n================================================================================\n"
+#[derive(Parser, Debug)]
+#[command(name = "mcp-server-wazuh")]
+#[command(about = "Wazuh SIEM MCP Server")]
+struct Args {
+    // Currently only stdio transport is supported
+    // Future versions may add HTTP-SSE transport
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct GetAlertSummaryParams {
+    #[schemars(description = "Maximum number of alerts to retrieve (default: 100)")]
+    limit: Option<u32>,
+}
+
+#[derive(Clone)]
+struct WazuhToolsServer {
+    wazuh_client: Arc<WazuhIndexerClient>,
+}
+
+#[tool(tool_box)]
+impl WazuhToolsServer {
+    fn new() -> Result<Self, anyhow::Error> {
+        dotenv().ok();
+
+        let wazuh_host = env::var("WAZUH_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let wazuh_port = env::var("WAZUH_PORT")
+            .unwrap_or_else(|_| "9200".to_string())
+            .parse::<u16>()
+            .map_err(|e| anyhow::anyhow!("Invalid WAZUH_PORT: {}", e))?;
+        let wazuh_user = env::var("WAZUH_USER").unwrap_or_else(|_| "admin".to_string());
+        let wazuh_pass = env::var("WAZUH_PASS").unwrap_or_else(|_| "admin".to_string());
+        let verify_ssl = env::var("VERIFY_SSL")
+            .unwrap_or_else(|_| "false".to_string())
+            .to_lowercase()
+            == "true";
+
+        let wazuh_client = WazuhIndexerClient::new(
+            wazuh_host,
+            wazuh_port,
+            wazuh_user,
+            wazuh_pass,
+            verify_ssl,
         );
-        eprintln!("PANIC OCCURRED IN MCP SERVER");
-        eprintln!(
-            "\n--------------------------------------------------------------------------------\n"
-        );
-        eprintln!("Panic Info: {:#?}", panic_info);
-        eprintln!(
-            "\n--------------------------------------------------------------------------------\n"
-        );
-        // Capture and print the backtrace
-        // Requires RUST_BACKTRACE=1 (or full) to be set in the environment
-        let backtrace = Backtrace::capture();
-        eprintln!("Backtrace:\n{:?}", backtrace);
-        eprintln!(
-            "\n================================================================================\n"
-        );
 
-        // If tracing is still operational, try to log with it too.
-        // This might not always work if the panic is deep within tracing or stdio.
-        error!(panic_info = %panic_info, backtrace = ?backtrace, "Global panic hook caught a panic");
-    }));
-    debug!("Custom panic hook set.");
+        Ok(Self {
+            wazuh_client: Arc::new(wazuh_client),
+        })
+    }
 
-    // Configure tracing to output to stderr
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(EnvFilter::from_default_env().add_directive(Level::DEBUG.into()))
-        .init();
+    #[tool(
+        name = "get_wazuh_alert_summary",
+        description = "Retrieves a summary of Wazuh security alerts. Returns formatted alert information including ID, timestamp, and description."
+    )]
+    async fn get_wazuh_alert_summary(
+        &self,
+        #[tool(aggr)] params: GetAlertSummaryParams,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = params.limit.unwrap_or(100);
+        
+        tracing::info!(limit = %limit, "Retrieving Wazuh alert summary");
 
-    info!("Starting Wazuh MCP Server");
+        match self.wazuh_client.get_alerts().await {
+            Ok(raw_alerts) => {
+                let alerts_to_process: Vec<_> = raw_alerts.into_iter().take(limit as usize).collect();
+                
+                let content_items: Vec<serde_json::Value> = if alerts_to_process.is_empty() {
+                    // If no alerts, return a single "no alerts" message
+                    vec![json!({
+                        "type": "text",
+                        "text": "No Wazuh alerts found."
+                    })]
+                } else {
+                    // Map each alert to a content item
+                    alerts_to_process
+                        .into_iter()
+                        .map(|alert| {
+                            let source = alert.get("_source").unwrap_or(&alert);
+                            
+                            // Extract alert ID
+                            let id = source.get("id")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| alert.get("_id").and_then(|v| v.as_str()))
+                                .unwrap_or("Unknown ID");
+                            
+                            // Extract rule description
+                            let description = source.get("rule")
+                                .and_then(|r| r.get("description"))
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("No description available");
+                            
+                            // Extract timestamp if available
+                            let timestamp = source.get("timestamp")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("Unknown time");
+                            
+                            // Extract agent name if available
+                            let agent_name = source.get("agent")
+                                .and_then(|a| a.get("name"))
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("Unknown agent");
+                            
+                            // Extract rule level if available
+                            let rule_level = source.get("rule")
+                                .and_then(|r| r.get("level"))
+                                .and_then(|l| l.as_u64())
+                                .unwrap_or(0);
+                            
+                            // Format the alert as a text entry and create a content item
+                            json!({
+                                "type": "text",
+                                "text": format!(
+                                    "Alert ID: {}\nTime: {}\nAgent: {}\nLevel: {}\nDescription: {}",
+                                    id, timestamp, agent_name, rule_level, description
+                                )
+                            })
+                        })
+                        .collect()
+                };
 
-    debug!("Loading environment variables...");
-    let wazuh_host = env::var("WAZUH_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let wazuh_port = env::var("WAZUH_PORT")
-        .unwrap_or_else(|_| "9200".to_string())
-        .parse::<u16>()
-        .expect("WAZUH_PORT must be a valid port number");
-    let wazuh_user = env::var("WAZUH_USER").unwrap_or_else(|_| "admin".to_string());
-    let wazuh_pass = env::var("WAZUH_PASS").unwrap_or_else(|_| "admin".to_string());
-    let verify_ssl = env::var("VERIFY_SSL")
-        .unwrap_or_else(|_| "false".to_string())
-        .to_lowercase()
-        == "true";
-    let mcp_server_port = env::var("MCP_SERVER_PORT")
-        .unwrap_or_else(|_| "8000".to_string())
-        .parse::<u16>()
-        .expect("MCP_SERVER_PORT must be a valid port number");
+                tracing::info!("Successfully processed {} alerts into content items", content_items.len());
 
-    debug!(
-        wazuh_host,
-        wazuh_port,
-        wazuh_user,
-        // wazuh_pass is sensitive, avoid logging
-        verify_ssl,
-        mcp_server_port,
-        "Environment variables loaded."
-    );
-
-    info!("Initializing Wazuh API client...");
-    let wazuh_client = WazuhIndexerClient::new(
-        wazuh_host.clone(),
-        wazuh_port,
-        wazuh_user.clone(),
-        wazuh_pass.clone(),
-        verify_ssl,
-    );
-
-    let app_state = Arc::new(AppState {
-        wazuh_client: Mutex::new(wazuh_client),
-    });
-    debug!("AppState created.");
-
-    // Set up HTTP routes using the new http_service module
-    info!("Setting up HTTP routes...");
-    let app = create_http_router(app_state.clone());
-    debug!("HTTP routes configured.");
-
-    let addr = SocketAddr::from(([0, 0, 0, 0], mcp_server_port));
-    info!("Attempting to bind HTTP server to {}", addr);
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .unwrap_or_else(|e| {
-            error!("Failed to bind to address {}: {}", addr, e);
-            panic!("Failed to bind to address {}: {}", addr, e);
-        });
-    info!("Wazuh MCP Server listening on {}", addr);
-
-    // Spawn the stdio transport handler using the new stdio_service
-    info!("Spawning stdio service handler...");
-    let app_state_for_stdio = app_state.clone();
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-
-    let stdio_handle = tokio::spawn(async move {
-        run_stdio_service(app_state_for_stdio, shutdown_tx).await;
-        info!("run_stdio_service ASYNC TASK has completed its execution.");
-    });
-
-    // Configure Axum with graceful shutdown
-    let axum_shutdown_signal = async {
-        shutdown_rx
-            .await
-            .map_err(|e| error!("Shutdown signal sender dropped: {}", e))
-            .ok(); // Wait for the signal, log if sender is dropped
-        info!("Graceful shutdown signal received for Axum server. Axum will now attempt to shut down.");
-    };
-
-    info!("Starting Axum server with graceful shutdown.");
-    let axum_task = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(axum_shutdown_signal)
-            .await
-            .unwrap_or_else(|e| {
-                error!("Axum Server run error: {}", e);
-            });
-        info!("Axum server task has completed and shut down.");
-    });
-
-    // Make handles mutable so select can take &mut
-    let mut stdio_handle = stdio_handle;
-    let mut axum_task = axum_task;
-
-    // Wait for either the stdio service or Axum server to complete.
-    tokio::select! {
-        biased; // Prioritize checking stdio_handle first if both are ready
-
-        stdio_res = &mut stdio_handle => {
-            match stdio_res {
-                Ok(_) => info!("Stdio service task completed. Axum's graceful shutdown should have been triggered if stdio initiated it."),
-                Err(e) => error!("Stdio service task failed or panicked: {:?}", e),
+                // Construct the final result with the content array containing multiple text objects
+                let result = json!({
+                    "content": content_items
+                });
+                
+                Ok(CallToolResult::success(vec![
+                    Content::json(result)
+                        .map_err(|e| McpError::internal_error(e.to_string(), None))?,
+                ]))
             }
-            // Stdio has finished. If it didn't send a shutdown signal (e.g. due to panic before sending),
-            // Axum might still be running. The shutdown_tx being dropped will also trigger axum_shutdown_signal.
-            info!("Waiting for Axum server to fully shut down after stdio completion...");
-            match axum_task.await {
-                Ok(_) => info!("Axum server task completed successfully after stdio completion."),
-                Err(e) => error!("Axum server task failed or panicked after stdio completion: {:?}", e),
-            }
-        }
-
-
-        axum_res = &mut axum_task => {
-            match axum_res {
-                Ok(_) => info!("Axum server task completed (possibly due to graceful shutdown or error)."),
-                Err(e) => error!("Axum server task failed or panicked: {:?}", e),
-            }
-            // Axum has finished. The main function will now exit.
-            // We should wait for stdio_handle to complete or be cancelled.
-            info!("Axum finished. Waiting for stdio_handle to complete or be cancelled...");
-            match stdio_handle.await {
-                Ok(_) => info!("Stdio service task also completed after Axum finished."),
-                Err(e) => {
-                    if e.is_cancelled() {
-                        info!("Stdio service task was cancelled after Axum finished (expected if main is exiting).");
-                    } else {
-                        error!("Stdio service task failed or panicked after Axum finished: {:?}", e);
-                    }
-                }
+            Err(e) => {
+                let err_msg = format!("Error retrieving alerts from Wazuh: {}", e);
+                tracing::error!("{}", err_msg);
+                Ok(CallToolResult::error(vec![Content::text(err_msg)]))
             }
         }
     }
-    info!("Main function is exiting.");
+}
+
+#[tool(tool_box)]
+impl ServerHandler for WazuhToolsServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ServerCapabilities::builder()
+                .enable_prompts()
+                .enable_resources()
+                .enable_tools()
+                .build(),
+            server_info: Implementation::from_build_env(),
+            instructions: Some(
+                "This server provides tools to interact with a Wazuh SIEM instance for security monitoring and analysis.\n\
+                Available tools:\n\
+                - 'get_wazuh_alert_summary': Retrieves a summary of Wazuh security alerts. \
+                Optionally takes 'limit' parameter to control the number of alerts returned (defaults to 100)."
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let _args = Args::parse();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::DEBUG.into()),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
+    tracing::info!("Starting Wazuh MCP Server...");
+
+    // Create an instance of our Wazuh tools server
+    let server = WazuhToolsServer::new()
+        .expect("Error initializing Wazuh tools server");
+
+    tracing::info!("Using stdio transport");
+    let service = server.serve(stdio()).await
+        .inspect_err(|e| {
+            tracing::error!("serving error: {:?}", e);
+        })?;
+
+    service.waiting().await?;
+    Ok(())
 }
