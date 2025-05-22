@@ -208,39 +208,22 @@ Example interaction flow:
     ```
 
 3.  **Server sends `initialize` response to client via `stdout`:**
-    (Capabilities shown are illustrative based on logs; actual capabilities might vary.)
     ```json
     {
       "jsonrpc": "2.0",
-      "id": 0,
+      "id": 1,
       "result": {
         "protocolVersion": "2024-11-05",
         "capabilities": {
-          "tools": {
-            "supported": true,
-            "definitions": [
-              {
-                "name": "get_wazuh_alert_summary",
-                "description": "Retrieves a summary of Wazuh security alerts. Returns formatted alert information including ID, timestamp, and description.",
-                "inputSchema": {
-                  "type": "object",
-                  "properties": {
-                    "limit": {
-                      "type": "integer",
-                      "description": "Maximum number of alerts to retrieve (default: 100)"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          "resources": { "supported": true },
-          "prompts": { "supported": true }
+          "prompts": {},
+          "resources": {},
+          "tools": {}
         },
         "serverInfo": {
-          "name": "Wazuh MCP Server",
-          "version": "0.1.0"
-        }
+          "name": "rmcp",
+          "version": "0.1.5"
+        },
+        "instructions": "This server provides tools to interact with a Wazuh SIEM instance for security monitoring and analysis.\nAvailable tools:\n- 'get_wazuh_alert_summary': Retrieves a summary of Wazuh security alerts. Optionally takes 'limit' parameter to control the number of alerts returned (defaults to 100)."
       }
     }
     ```
@@ -268,30 +251,24 @@ Example interaction flow:
     ```json
     {
       "jsonrpc": "2.0",
-      "id": 1,
+      "id": 2,
       "result": {
         "tools": [
           {
-            "name": "wazuhAlerts",
-            "description": "Retrieves the latest security alerts from the Wazuh SIEM.",
-            "inputSchema": { "type": "object", "properties": {} },
-            "outputSchema": {
-              "type": "object",
+            "name": "get_wazuh_alert_summary",
+            "description": "Retrieves a summary of Wazuh security alerts. Returns formatted alert information including ID, timestamp, and description.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
               "properties": {
-                "alerts": {
-                  "type": "array",
-                  "description": "A list of simplified alert objects.",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "id": { "type": "string", "description": "The unique identifier of the alert." },
-                      "description": { "type": "string", "description": "The description of the rule that triggered the alert." }
-                    },
-                    "required": ["id", "description"]
-                  }
+                "limit": {
+                  "description": "Maximum number of alerts to retrieve (default: 100)",
+                  "format": "uint32",
+                  "minimum": 0.0,
+                  "type": ["integer", "null"]
                 }
               },
-              "required": ["alerts"]
+              "title": "GetAlertSummaryParams",
+              "type": "object"
             }
           }
         ]
@@ -299,41 +276,77 @@ Example interaction flow:
     }
     ```
 
-7.  **Client calls the `wazuhAlerts` tool by sending `tools/call` to server's `stdin`:**
+7.  **Client calls the `get_wazuh_alert_summary` tool by sending `tools/call` to server's `stdin`:**
     ```json
     {
       "jsonrpc": "2.0",
-      "id": 2,
+      "id": 3,
       "method": "tools/call",
       "params": {
-        "name": "wazuhAlerts",
-        "arguments": {}
+        "name": "get_wazuh_alert_summary",
+        "arguments": {
+          "limit": 5
+        }
       }
     }
     ```
 
-8.  **Server receives on `stdin`, processes the `wazuhAlerts` call (which involves querying the Wazuh API and transforming the data as described elsewhere in this README).**
+8.  **Server receives on `stdin`, processes the `get_wazuh_alert_summary` call (which involves querying the Wazuh Indexer API and transforming the data).**
 
-9.  **Server sends `tools/call` response with transformed alerts to client via `stdout`:**
-    (Alert content is illustrative and simplified.)
+9.  **Server sends `tools/call` response with formatted alerts to client via `stdout`:**
     ```json
     {
       "jsonrpc": "2.0",
-      "id": 2,
+      "id": 3,
       "result": {
-        "alerts": [
+        "content": [
           {
-            "id": "1747091815.1212763",
-            "description": "Attached USB Storage"
+            "type": "text",
+            "text": "Alert ID: 1747091815.1212763\nTime: 2024-01-15T10:30:45.123Z\nAgent: web-server-01\nLevel: 7\nDescription: Attached USB Storage"
           },
           {
-            "id": "1747066333.1207112",
-            "description": "New dpkg (Debian Package) installed."
+            "type": "text", 
+            "text": "Alert ID: 1747066333.1207112\nTime: 2024-01-15T10:25:12.456Z\nAgent: database-server\nLevel: 5\nDescription: New dpkg (Debian Package) installed."
           }
-          // ... other simplified alerts based on the tool's outputSchema
-        ]
+        ],
+        "isError": false
       }
     }
+    ```
+
+    **Or, if no alerts are found:**
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "No Wazuh alerts found."
+          }
+        ],
+        "isError": false
+      }
+    }
+    ```
+
+    **Or, if there's an error connecting to Wazuh:**
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Error retrieving alerts from Wazuh: HTTP request error: connection refused"
+          }
+        ],
+        "isError": true
+      }
+    }
+    ```
 
 ## Running the All-in-One Demo (Wazuh + MCP Server)
 
