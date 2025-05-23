@@ -169,16 +169,6 @@ This stdio interaction allows for tight integration with local development tools
     ```
     If the HTTP server is enabled, it will start listening on the port specified by `MCP_SERVER_PORT` (default 8000). Otherwise, it will operate in stdio mode.
 
-### Docker Deployment
-
-1.  **Clone the repository** (if not already done).
-2.  **Configure:** Ensure you have a `.env` file with your Wazuh credentials in the project root if using the API, or set the environment variables directly in the `docker-compose.yml` or your deployment environment.
-3.  **Build and Run:**
-    ```bash
-    docker-compose up --build -d
-    ```
-    This will build the Docker image and start the container in detached mode.
-
 ## Stdio Mode Operation
 
 The server communicates via `stdin` and `stdout` using JSON-RPC 2.0 messages, adhering to the Model Context Protocol (MCP).
@@ -347,60 +337,6 @@ Example interaction flow:
       }
     }
     ```
-
-## Running the All-in-One Demo (Wazuh + MCP Server)
-
-For a complete local demo environment that includes Wazuh (Indexer, Manager, Dashboard) and the Wazuh MCP Server pre-configured to connect to it (for HTTP mode testing), you can use the `docker-compose.all-in-one.yml` file.
-
-This setup is ideal for testing the end-to-end flow from Wazuh alerts to MCP messages via the HTTP interface.
-
-**1. Launch the Environment:**
-
-Navigate to the project root directory in your terminal and run:
-
-```bash
-docker-compose -f docker-compose.all-in-one.yml up -d
-```
-
-This command will:
-- Download the necessary Wazuh and OpenSearch images (if not already present).
-- Start the Wazuh Indexer, Wazuh Manager, and Wazuh Dashboard services.
-- Build and start the Wazuh MCP Server (in HTTP mode).
-- All services are configured to communicate with each other on an internal Docker network.
-
-**2. Accessing Services:**
-
-*   **Wazuh Dashboard:**
-    *   URL: `https://localhost:8443` (Note: Uses HTTPS with a self-signed certificate, so your browser will likely show a warning).
-    *   Default Username: `admin`
-    *   Default Password: `AdminPassword123!` (This is set by `WAZUH_INITIAL_PASSWORD` in the `wazuh-indexer` service).
-
-*   **Wazuh MCP Server (HTTP Mode):**
-    *   The MCP server will be running and accessible on port `8000` by default (or the port specified by `MCP_SERVER_PORT` if you've set it as an environment variable on your host machine before running docker-compose).
-    *   Example MCP endpoint: `http://localhost:8000/mcp`
-    *   Example Health endpoint: `http://localhost:8000/health`
-    *   **Configuration:** The `mcp-server` service within `docker-compose.all-in-one.yml` is already configured with the necessary environment variables to connect to the `wazuh-manager` service:
-        *   `WAZUH_HOST=wazuh-manager`
-        *   `WAZUH_PORT=55000`
-        *   `WAZUH_USER=wazuh_user_demo`
-        *   `WAZUH_PASS=wazuh_password_demo`
-        *   `VERIFY_SSL=false`
-        You do not need to set these in a separate `.env` file when using this all-in-one compose file, as they are defined directly in the service's environment.
-
-**3. Stopping the Environment:**
-
-To stop all services, run:
-
-```bash
-docker-compose -f docker-compose.all-in-one.yml down
-```
-
-To stop and remove volumes (deleting Wazuh data):
-
-```bash
-docker-compose -f docker-compose.all-in-one.yml down -v
-```
-This approach simplifies setup by bundling all necessary components and their configurations for HTTP mode testing.
 
 ## Development & Testing
 

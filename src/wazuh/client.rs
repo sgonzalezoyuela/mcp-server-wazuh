@@ -13,8 +13,8 @@ pub struct WazuhIndexerClient {
     http_client: Client,
 }
 
-// Renamed impl block
 impl WazuhIndexerClient {
+    #[allow(dead_code)]
     pub fn new(
         host: String,
         indexer_port: u16,
@@ -22,9 +22,20 @@ impl WazuhIndexerClient {
         password: String,
         verify_ssl: bool,
     ) -> Self {
-        debug!(%host, indexer_port, %username, %verify_ssl, "Creating new WazuhIndexerClient");
+        Self::new_with_protocol(host, indexer_port, username, password, verify_ssl, "https")
+    }
+
+    pub fn new_with_protocol(
+        host: String,
+        indexer_port: u16,
+        username: String,
+        password: String,
+        verify_ssl: bool,
+        protocol: &str,
+    ) -> Self {
+        debug!(%host, indexer_port, %username, %verify_ssl, %protocol, "Creating new WazuhIndexerClient");
         // Base URL now points to the Indexer
-        let base_url = format!("https://{}:{}", host, indexer_port);
+        let base_url = format!("{}://{}:{}", protocol, host, indexer_port);
         debug!(%base_url, "Wazuh Indexer base URL set");
 
         let http_client = Client::builder()

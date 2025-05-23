@@ -1,60 +1,133 @@
 # Wazuh MCP Server Tests
 
-This directory contains tests for the Wazuh MCP Server, including end-to-end tests that simulate a client interacting with the server.
+This directory contains tests for the Wazuh MCP Server using the rmcp framework, including unit tests, integration tests with mock Wazuh API, and end-to-end MCP protocol tests.
 
 ## Test Files
 
-- `e2e_client_test.rs`: End-to-end test for MCP client interacting with Wazuh MCP server
-- `integration_test.rs`: Integration test for Wazuh MCP Server with a mock Wazuh API
-- `mcp_client.rs`: Reusable MCP client implementation
-- `mcp_client_cli.rs`: Command-line tool for interacting with the MCP server
+- `rmcp_integration_test.rs`: Integration tests for the rmcp-based MCP server using a mock Wazuh API.
+- `mock_wazuh_server.rs`: Mock Wazuh API server implementation, used by the integration tests.
+- `mcp_stdio_test.rs`: Tests for MCP protocol communication via stdio, focusing on initialization, compliance, concurrent requests, and error handling for invalid/unsupported messages.
+- `run_tests.sh`: A shell script that automates running the various test suites.
+
+## Testing Strategy
+
+### 1. Mock Wazuh Server Tests
+Tests the MCP server with a mock Wazuh API to verify:
+- Tool registration and schema generation
+- Alert retrieval and formatting
+- Error handling for API failures
+- Parameter validation
+
+### 2. MCP Protocol Tests
+Tests the MCP protocol implementation (primarily in `mcp_stdio_test.rs`):
+- Initialize handshake.
+- Tools listing (basic, without requiring a live Wazuh connection).
+- Handling of invalid JSON-RPC requests and unsupported methods.
+- Behavior with concurrent requests.
+- JSON-RPC 2.0 compliance.
+(Note: Full tool execution, like `tools/call`, is primarily tested in `rmcp_integration_test.rs` using the mock Wazuh server.)
+
+### 3. Unit Tests
+Tests individual components and modules, typically run via `cargo test --lib`. These may include:
+- Wazuh client logic (e.g., authentication, request formation, response parsing).
+- Alert data transformation and formatting.
+- Internal error handling mechanisms and utility functions.
 
 ## Running the Tests
 
-To run all tests:
-
+### Run All Tests
 ```bash
 cargo test
 ```
 
-To run a specific test:
-
+### Run Specific Test Categories
 ```bash
-cargo test --test e2e_client_test
-cargo test --test integration_test
+# Integration tests with mock Wazuh
+cargo test --test rmcp_integration_test
+
+# MCP protocol tests
+cargo test --test mcp_stdio_test
+
+# Unit tests
+cargo test --lib
 ```
 
-## Using the MCP Client CLI
-
-The MCP Client CLI can be used to interact with the MCP server for testing purposes:
-
+### Run Tests with Logging
 ```bash
-# Build the CLI
-cargo build --bin mcp_client_cli
-
-# Run the CLI
-MCP_SERVER_URL=http://localhost:8000 ./target/debug/mcp_client_cli get-data
-MCP_SERVER_URL=http://localhost:8000 ./target/debug/mcp_client_cli health
-MCP_SERVER_URL=http://localhost:8000 ./target/debug/mcp_client_cli query '{"severity": "high"}'
+RUST_LOG=debug cargo test -- --nocapture
 ```
 
 ## Test Environment Variables
 
-The tests use the following environment variables:
+The tests support the following environment variables:
 
-- `MCP_SERVER_URL`: URL of the MCP server (default: http://localhost:8000)
-- `WAZUH_HOST`: Hostname of the Wazuh API server
-- `WAZUH_PORT`: Port of the Wazuh API server
-- `WAZUH_USER`: Username for Wazuh API authentication
-- `WAZUH_PASS`: Password for Wazuh API authentication
-- `VERIFY_SSL`: Whether to verify SSL certificates (default: false)
-- `RUST_LOG`: Log level for the tests (default: info)
+- `RUST_LOG`: Log level for tests (default: info)
+- `TEST_WAZUH_HOST`: Real Wazuh host for integration tests (optional)
+- `TEST_WAZUH_PORT`: Real Wazuh port for integration tests (optional)
+- `TEST_WAZUH_USER`: Real Wazuh username for integration tests (optional)
+- `TEST_WAZUH_PASS`: Real Wazuh password for integration tests (optional)
 
 ## Mock Wazuh API Server
 
-The tests use a mock Wazuh API server to simulate the Wazuh API. The mock server provides:
+The mock server simulates a real Wazuh Indexer API with:
 
-- Authentication endpoint: `/security/user/authenticate`
-- Alerts endpoint: `/wazuh-alerts-*_search`
+### Authentication Endpoint
+- `POST /security/user/authenticate`
+- Returns mock JWT token
 
-The mock server returns predefined responses for these endpoints, allowing the tests to run without a real Wazuh API server.
+### Alerts Endpoint  
+- `POST /wazuh-alerts-*/_search` (Note: The Wazuh API typically uses POST for search queries with a body)
+- Returns configurable mock alert data
+- Supports different scenarios (success, empty, error)
+
+### Configurable Responses
+The mock server can be configured to return:
+- Successful responses with sample alerts
+- Empty responses (no alerts)
+- Error responses (500, 401, etc.)
+- Malformed responses for error testing
+
+## Testing Without Real Wazuh
+
+All tests can run without a real Wazuh instance by using the mock server. This allows for:
+
+- **CI/CD Integration**: Tests run in any environment
+- **Deterministic Results**: Predictable test data
+- **Error Scenario Testing**: Simulate various failure modes
+- **Fast Execution**: No network dependencies
+
+## Testing With a Real Wazuh Instance (Manual End-to-End)
+
+The automated test suites (`cargo test`) use mock servers or no Wazuh connection. To perform end-to-end testing with a real Wazuh instance, you need to run the server application itself and interact with it manually or via a separate client.
+
+1.  **Set up your Wazuh environment:** Ensure you have a running Wazuh instance (Indexer/API).
+2.  **Configure Environment Variables:** Set the standard runtime environment variables for the server to connect to your Wazuh instance:
+    ```bash
+    export WAZUH_HOST="your-wazuh-indexer-host"  # e.g., localhost or an IP address
+    export WAZUH_PORT="9200"                     # Or your Wazuh Indexer port
+    export WAZUH_USER="your-wazuh-api-user"
+    export WAZUH_PASS="your-wazuh-api-password"
+    export VERIFY_SSL="false"                    # Set to "true" if your Wazuh API uses a valid CA-signed SSL certificate
+    # export RUST_LOG="debug"                    # For more detailed server logs
+    ```
+
+## Manual Testing
+
+### Using stdio directly
+The server communicates over stdin/stdout. You can send commands by piping them to the process:
+```bash
+# Example: Send an initialize request
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | cargo run --bin mcp-server-wazuh
+```
+
+### Using the test script
+```bash
+# Run the provided test script
+./tests/run_tests.sh
+```
+
+This script will:
+1. Start the MCP server with mock Wazuh configuration
+2. Send a series of MCP commands
+3. Verify responses
+4. Clean up processes

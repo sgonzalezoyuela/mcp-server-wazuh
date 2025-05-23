@@ -7,7 +7,7 @@ RUN apt-get update && \
     apt-get install -y pkg-config libssl-dev && \
     cargo build --release
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
