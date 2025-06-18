@@ -26,10 +26,10 @@ impl McpServerProcess {
     fn start_with_mock_wazuh(mock_server: &MockWazuhServer) -> Result<Self, Box<dyn std::error::Error>> {
         let mut child = Command::new("cargo")
             .args(["run", "--bin", "mcp-server-wazuh"])
-            .env("WAZUH_HOST", mock_server.host())
-            .env("WAZUH_PORT", mock_server.port().to_string())
-            .env("WAZUH_USER", "admin")
-            .env("WAZUH_PASS", "admin")
+            .env("WAZUH_INDEXER_HOST", mock_server.host())
+            .env("WAZUH_INDEXER_PORT", mock_server.port().to_string())
+            .env("WAZUH_INDEXER_USER", "admin")
+            .env("WAZUH_INDEXER_PASS", "admin")
             .env("VERIFY_SSL", "false")
             .env("WAZUH_TEST_PROTOCOL", "http")
             .env("RUST_LOG", "warn") // Reduce noise in tests

@@ -90,44 +90,43 @@ impl WazuhToolsServer {
     fn new() -> Result<Self, anyhow::Error> {
         dotenv().ok();
 
-        let wazuh_host = env::var("WAZUH_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let wazuh_api_port = env::var("WAZUH_API_PORT")
-            .unwrap_or_else(|_| "55000".to_string())
-            .parse::<u16>()
-            .map_err(|e| anyhow::anyhow!("Invalid WAZUH_API_PORT: {}", e))?;
-        let wazuh_indexer_port = env::var("WAZUH_INDEXER_PORT")
-            .unwrap_or_else(|_| "9200".to_string())
-            .parse::<u16>()
-            .map_err(|e| anyhow::anyhow!("Invalid WAZUH_INDEXER_PORT: {}", e))?;
-        
-        // For backward compatibility, also check WAZUH_PORT
-        let wazuh_port = env::var("WAZUH_PORT")
-            .ok()
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(wazuh_indexer_port);
-        
-        let wazuh_user = env::var("WAZUH_USER").unwrap_or_else(|_| "admin".to_string());
-        let wazuh_pass = env::var("WAZUH_PASS").unwrap_or_else(|_| "admin".to_string());
-        let verify_ssl = env::var("VERIFY_SSL")
-            .unwrap_or_else(|_| "false".to_string())
-            .to_lowercase()
-            == "true";
+    let api_host = env::var("WAZUH_API_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let api_port: u16 = env::var("WAZUH_API_PORT")
+        .unwrap_or_else(|_| "55000".to_string())
+        .parse()
+        .unwrap_or(55000);
+    let api_username = env::var("WAZUH_API_USERNAME").unwrap_or_else(|_| "wazuh".to_string());
+    let api_password = env::var("WAZUH_API_PASSWORD").unwrap_or_else(|_| "wazuh".to_string());
 
-        let protocol = env::var("WAZUH_TEST_PROTOCOL").unwrap_or_else(|_| "https".to_string());
-        tracing::debug!(?protocol, "Using Wazuh protocol for client from WAZUH_TEST_PROTOCOL or default");
+    let indexer_host = env::var("WAZUH_INDEXER_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let indexer_port: u16 = env::var("WAZUH_INDEXER_PORT")
+        .unwrap_or_else(|_| "9200".to_string())
+        .parse()
+        .unwrap_or(9200);
+    let indexer_username =
+        env::var("WAZUH_INDEXER_USERNAME").unwrap_or_else(|_| "admin".to_string());
+    let indexer_password =
+        env::var("WAZUH_INDEXER_PASSWORD").unwrap_or_else(|_| "admin".to_string());
 
-        let wazuh_factory = WazuhClientFactory::new(
-            wazuh_host.clone(),      
-            wazuh_api_port,          
-            wazuh_user.clone(),      
-            wazuh_pass.clone(),      
-            wazuh_host,              
-            wazuh_port,              
-            wazuh_user,              
-            wazuh_pass,              
-            verify_ssl,
-            Some(protocol),
-        );
+    let verify_ssl = env::var("WAZUH_VERIFY_SSL")
+        .unwrap_or_else(|_| "false".to_string())
+        .parse()
+        .unwrap_or(false);
+
+    let test_protocol = env::var("WAZUH_TEST_PROTOCOL")
+        .ok().or_else(|| Some("https".to_string()));
+
+    let wazuh_factory = WazuhClientFactory::new(
+        api_host,
+        api_port,
+        api_username,
+        api_password,
+        indexer_host,
+        indexer_port,
+        indexer_username,
+        indexer_password,
+        verify_ssl,
+        test_protocol);
 
         let wazuh_indexer_client = wazuh_factory.create_indexer_client();
         let wazuh_rules_client = wazuh_factory.create_rules_client();

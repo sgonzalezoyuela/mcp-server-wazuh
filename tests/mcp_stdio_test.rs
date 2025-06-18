@@ -19,10 +19,14 @@ impl McpStdioClient {
     fn start() -> Result<Self, Box<dyn std::error::Error>> {
         let mut child = Command::new("cargo")
             .args(["run", "--bin", "mcp-server-wazuh"])
-            .env("WAZUH_HOST", "nonexistent.example.com") // Use non-existent host
-            .env("WAZUH_PORT", "9999")
-            .env("WAZUH_USER", "test")
-            .env("WAZUH_PASS", "test")
+            .env("WAZUH_API_HOST", "nonexistent.example.com") // Use non-existent host
+            .env("WAZUH_API_PORT", "9999")
+            .env("WAZUH_API_USER", "test")
+            .env("WAZUH_API_PASS", "test")
+            .env("WAZUH_INDEXER_HOST", "nonexistent.example.com") // Use non-existent host
+            .env("WAZUH_INDEXER_PORT", "8888")
+            .env("WAZUH_INDEXER_USER", "test")
+            .env("WAZUH_INDEXER_PASS", "test")
             .env("VERIFY_SSL", "false")
             .env("RUST_LOG", "error") // Minimize logging noise
             .stdin(Stdio::piped())
