@@ -49,12 +49,7 @@ use std::env;
 use clap::Parser;
 use dotenv::dotenv;
 
-mod wazuh {
-    pub mod client;
-    pub mod error;
-}
-
-use wazuh::client::WazuhIndexerClient;
+use wazuh_client::{WazuhClientFactory, WazuhIndexerClient};
 
 #[derive(Parser, Debug)]
 #[command(name = "mcp-server-wazuh")]
@@ -72,7 +67,9 @@ struct GetAlertSummaryParams {
 
 #[derive(Clone)]
 struct WazuhToolsServer {
-    wazuh_client: Arc<WazuhIndexerClient>,
+    #[allow(dead_code)] // Kept for future expansion to other Wazuh clients
+    wazuh_factory: Arc<WazuhClientFactory>,
+    wazuh_indexer_client: Arc<WazuhIndexerClient>,
 }
 
 #[tool(tool_box)]
@@ -81,10 +78,21 @@ impl WazuhToolsServer {
         dotenv().ok();
 
         let wazuh_host = env::var("WAZUH_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let wazuh_port = env::var("WAZUH_PORT")
+        let wazuh_api_port = env::var("WAZUH_API_PORT")
+            .unwrap_or_else(|_| "55000".to_string())
+            .parse::<u16>()
+            .map_err(|e| anyhow::anyhow!("Invalid WAZUH_API_PORT: {}", e))?;
+        let wazuh_indexer_port = env::var("WAZUH_INDEXER_PORT")
             .unwrap_or_else(|_| "9200".to_string())
             .parse::<u16>()
-            .map_err(|e| anyhow::anyhow!("Invalid WAZUH_PORT: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid WAZUH_INDEXER_PORT: {}", e))?;
+        
+        // For backward compatibility, also check WAZUH_PORT
+        let wazuh_port = env::var("WAZUH_PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(wazuh_indexer_port);
+        
         let wazuh_user = env::var("WAZUH_USER").unwrap_or_else(|_| "admin".to_string());
         let wazuh_pass = env::var("WAZUH_PASS").unwrap_or_else(|_| "admin".to_string());
         let verify_ssl = env::var("VERIFY_SSL")
@@ -95,17 +103,26 @@ impl WazuhToolsServer {
         let protocol = env::var("WAZUH_TEST_PROTOCOL").unwrap_or_else(|_| "https".to_string());
         tracing::debug!(?protocol, "Using Wazuh protocol for client from WAZUH_TEST_PROTOCOL or default");
 
-        let wazuh_client = WazuhIndexerClient::new_with_protocol(
-            wazuh_host,
-            wazuh_port,
-            wazuh_user,
-            wazuh_pass,
+        // Create the factory with both API and Indexer configurations
+        let wazuh_factory = WazuhClientFactory::new(
+            wazuh_host.clone(),      // API host
+            wazuh_api_port,          // API port
+            wazuh_user.clone(),      // API username
+            wazuh_pass.clone(),      // API password
+            wazuh_host,              // Indexer host (same as API host)
+            wazuh_port,              // Indexer port (use WAZUH_PORT for backward compatibility)
+            wazuh_user,              // Indexer username
+            wazuh_pass,              // Indexer password
             verify_ssl,
-            &protocol,
+            Some(protocol),
         );
 
+        // Create the indexer client using the factory
+        let wazuh_indexer_client = wazuh_factory.create_indexer_client();
+
         Ok(Self {
-            wazuh_client: Arc::new(wazuh_client),
+            wazuh_factory: Arc::new(wazuh_factory),
+            wazuh_indexer_client: Arc::new(wazuh_indexer_client),
         })
     }
 
@@ -121,7 +138,7 @@ impl WazuhToolsServer {
         
         tracing::info!(limit = %limit, "Retrieving Wazuh alert summary");
 
-        match self.wazuh_client.get_alerts().await {
+        match self.wazuh_indexer_client.get_alerts().await {
             Ok(raw_alerts) => {
                 let alerts_to_process: Vec<_> = raw_alerts.into_iter().take(limit as usize).collect();
 

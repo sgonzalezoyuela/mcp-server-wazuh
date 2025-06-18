@@ -1,4 +1,6 @@
-pub mod wazuh;
-
-pub use wazuh::client::WazuhIndexerClient;
-pub use wazuh::error::WazuhApiError;
+// Re-export the wazuh-client crate types for convenience
+pub use wazuh_client::{
+    WazuhClientFactory, WazuhClients, WazuhIndexerClient, WazuhApiError,
+    AgentsClient, RulesClient, ConfigurationClient, VulnerabilityClient,
+    ActiveResponseClient, ClusterClient, LogsClient, ConnectivityStatus
+};
