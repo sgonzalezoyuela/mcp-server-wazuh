@@ -4,7 +4,7 @@ WORKDIR /usr/src/app
 COPY . .
 
 RUN apt-get update && \
-    apt-get install -y pkg-config libssl-dev && \
+    apt-get install -y pkg-config libssl-dev build-essential perl make && \
     cargo build --release
 
 FROM debian:bookworm-slim
