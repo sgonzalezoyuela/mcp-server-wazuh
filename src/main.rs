@@ -83,7 +83,7 @@ use std::env;
 use clap::Parser;
 use dotenv::dotenv;
 
-use wazuh_client::{WazuhClientFactory, WazuhIndexerClient, RulesClient, VulnerabilityClient, AgentsClient, LogsClient, ClusterClient, Port as WazuhPort};
+use wazuh_client::{WazuhClientFactory, WazuhIndexerClient, RulesClient, VulnerabilityClient, VulnerabilitySeverity, AgentsClient, LogsClient, ClusterClient, Port as WazuhPort};
 
 #[derive(Parser, Debug)]
 #[command(name = "mcp-server-wazuh")]
@@ -532,7 +532,7 @@ impl WazuhToolsServer {
                 &agent_id,
                 Some(1000), // Get more results to filter
                 Some(offset),
-                params.severity.as_deref(),
+                params.severity.as_deref().and_then(VulnerabilitySeverity::from_str)
             ).await {
                 Ok(all_vulns) => {
                     let filtered: Vec<_> = all_vulns
@@ -549,7 +549,7 @@ impl WazuhToolsServer {
                 &agent_id,
                 Some(limit),
                 Some(offset),
-                params.severity.as_deref(),
+                params.severity.as_deref().and_then(VulnerabilitySeverity::from_str)
             ).await
         };
 
@@ -566,12 +566,11 @@ impl WazuhToolsServer {
                 let mcp_content_items: Vec<Content> = vulnerabilities
                     .into_iter()
                     .map(|vuln| {
-                        let severity_indicator = match vuln.severity.to_lowercase().as_str() {
-                            "critical" => "🔴 CRITICAL",
-                            "high" => "🟠 HIGH",
-                            "medium" => "🟡 MEDIUM", 
-                            "low" => "🟢 LOW",
-                            _ => &vuln.severity,
+                        let severity_indicator = match vuln.severity {
+                            VulnerabilitySeverity::Critical => "🔴 CRITICAL",
+                            VulnerabilitySeverity::High => "🟠 HIGH",
+                            VulnerabilitySeverity::Medium => "🟡 MEDIUM", 
+                            VulnerabilitySeverity::Low => "🟢 LOW",
                         };
 
                         let published_info = if let Some(published) = &vuln.published {
