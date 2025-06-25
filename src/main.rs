@@ -124,11 +124,11 @@ struct GetVulnerabilitySummaryParams {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-struct GetRunningAgentsParams {
+struct GetAgentsParams {
     #[schemars(description = "Maximum number of agents to retrieve (default: 100)")]
     limit: Option<u32>,
-    #[schemars(description = "Agent status filter (active, disconnected, pending, never_connected) (default: active)")]
-    status: Option<String>,
+    #[schemars(description = "Agent status filter (active, disconnected, pending, never_connected)")]
+    status: String,
     #[schemars(description = "Agent name to search for (optional)")]
     name: Option<String>,
     #[schemars(description = "Agent IP address to filter by (optional)")]
@@ -159,14 +159,14 @@ struct GetAgentProcessesParams {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct GetAgentPortsParams {
-    #[schemars(description = "Agent ID to get network ports for (required, e.g., \"0\", \"1\", \"001\")")]
+    #[schemars(description = "Agent ID to get network ports for (required, e.g., \"001\", \"002\", \"003\")")]
     agent_id: String,
     #[schemars(description = "Maximum number of ports to retrieve (default: 100)")]
     limit: Option<u32>,
-    #[schemars(description = "Protocol to filter by (e.g., \"tcp\", \"udp\") (optional)")]
-    protocol: Option<String>,
-    #[schemars(description = "State to filter by (e.g., \"LISTEN\", \"ESTABLISHED\") (optional)")]
-    state: Option<String>,
+    #[schemars(description = "Protocol to filter by (e.g., \"tcp\", \"udp\")")]
+    protocol: String,
+    #[schemars(description = "State to filter by (e.g., \"LISTENING\", \"ESTABLISHED\")")]
+    state: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -175,8 +175,8 @@ struct SearchManagerLogsParams {
     limit: Option<u32>,
     #[schemars(description = "Number of log entries to skip (default: 0)")]
     offset: Option<u32>,
-    #[schemars(description = "Log level to filter by (e.g., \"error\", \"warning\", \"info\") (optional)")]
-    level: Option<String>,
+    #[schemars(description = "Log level to filter by (e.g., \"error\", \"warning\", \"info\")")]
+    level: String,
     #[schemars(description = "Log tag to filter by (e.g., \"wazuh-modulesd\") (optional)")]
     tag: Option<String>,
     #[schemars(description = "Search term to filter log descriptions (optional)")]
@@ -801,20 +801,18 @@ impl WazuhToolsServer {
     }
 
     #[tool(
-        name = "get_wazuh_running_agents",
+        name = "get_wazuh_agents",
         description = "Retrieves a list of Wazuh agents with their current status and details. Returns formatted agent information including ID, name, IP, status, OS details, and last activity. Supports filtering by status, name, IP, group, OS platform, and version."
     )]
-
-    async fn get_wazuh_running_agents(
+    async fn get_wazuh_agents(
         &self,
-        #[tool(aggr)] params: GetRunningAgentsParams,
+        #[tool(aggr)] params: GetAgentsParams,
     ) -> Result<CallToolResult, McpError> {
        let limit = params.limit.unwrap_or(100);
-        let status = params.status.as_deref().unwrap_or("active"); // Default to active agents
         
         tracing::info!(
             limit = %limit, 
-            status = %status,
+            status = ?params.status,
             name = ?params.name, 
             ip = ?params.ip, 
             group = ?params.group,
@@ -831,7 +829,7 @@ impl WazuhToolsServer {
             None, // select
             None, // sort
             None, // search
-            Some(status),
+            Some(&params.status),
             None, // query
             None, // older_than
             params.os_platform.as_deref(),
@@ -851,7 +849,7 @@ impl WazuhToolsServer {
                 if agents.is_empty() {
                     tracing::info!("No Wazuh agents found matching criteria. Returning standard message.");
                     return Ok(CallToolResult::success(vec![Content::text(
-                        format!("No Wazuh agents found matching the specified criteria (status: {}).", status),
+                        format!("No Wazuh agents found matching the specified criteria (status: {}).", &params.status),
                     )]));
                 }
 
@@ -1232,7 +1230,7 @@ impl WazuhToolsServer {
         match logs_client.get_manager_logs(
             Some(limit),
             Some(offset),
-            params.level.as_deref(),
+            Some(&params.level),
             params.tag.as_deref(),
             params.search_term.as_deref(),
         ).await {
@@ -1391,13 +1389,13 @@ impl WazuhToolsServer {
         match logs_client.get_remoted_stats().await {
             Ok(stats) => {
                 let formatted_text = format!(
-                    "Wazuh Remoted Statistics:\nTotal Queue Size: {}\nTCP Sessions: {}\nEvent Count: {}\nControl Message Count: {}\nDiscarded Message Count: {}\nMessages Sent: {}\nBytes Received: {}\nDequeued After Close: {}",
+                    "Wazuh Remoted Statistics:\nQueue Size: {}\nTotal Queue Size: {}\nTCP Sessions: {}\nControl Message Count: {}\nDiscarded Message Count: {}\nMessages Sent (Bytes): {}\nBytes Received: {}\nDequeued After Close: {}",
+                    stats.queue_size,
                     stats.total_queue_size,
                     stats.tcp_sessions,
-                    stats.evt_count,
-                    stats.ctrl_count,
+                    stats.ctrl_msg_count,
                     stats.discarded_count,
-                    stats.msg_sent,
+                    stats.sent_bytes,
                     stats.recv_bytes,
                     stats.dequeued_after_close
                 );
@@ -1451,15 +1449,45 @@ impl WazuhToolsServer {
             &agent_id,
             Some(limit * 2), // Fetch more to allow for client-side state filtering
             Some(offset),
-            params.protocol.as_deref(),
+            Some(&params.protocol),
         ).await {
             Ok(mut ports) => {
-                // Client-side filtering for state if provided
-                if let Some(state_filter) = &params.state {
-                    ports.retain(|port| {
-                        port.state.as_ref().is_some_and(|s| s.eq_ignore_ascii_case(state_filter))
-                    });
-                }
+                let requested_state_is_listening = params.state.trim().eq_ignore_ascii_case("listening");
+
+                ports.retain(|port| {
+                    tracing::debug!(
+                        "Pre-filter port: {:?} (State: {:?}), requested_state_is_listening: {}",
+                        port.inode, // Using inode for a concise port identifier in log
+                        port.state,
+                        requested_state_is_listening
+                    );
+                    let result = match port.state.as_ref().map(|s| s.trim()) {
+                        Some(actual_port_state_str) => { // Port has a state string
+                            if actual_port_state_str.is_empty() {
+                                // Filter out ports where state is present but an empty string
+                                false
+                            } else if requested_state_is_listening {
+                                // User requested "listening": keep only if actual state is "listening"
+                                actual_port_state_str.eq_ignore_ascii_case("listening")
+                            } else {
+                                // User requested non-"listening": keep if actual state is not "listening"
+                                !actual_port_state_str.eq_ignore_ascii_case("listening")
+                            }
+                        }
+                        None => { // Port has no state (port.state is None)
+                            if requested_state_is_listening {
+                                // If user wants "listening" ports, a port with no state is not a match.
+                                false
+                            } else {
+                                // If user wants non-"listening" ports, a port with no state is a match.
+                                true
+                            }
+                        }
+                    };
+
+                   tracing::debug!("Post-filter decision for port: {:?}, Keep: {}", port.inode, result);
+                    result
+                });
 
                 // Apply limit after client-side filtering
                 ports.truncate(limit as usize);
@@ -1477,11 +1505,11 @@ impl WazuhToolsServer {
                     .map(|port: WazuhPort| { // Explicitly type port
                         let mut details = vec![
                             format!("Protocol: {}", port.protocol),
-                            format!("Local: {}:{}", port.local.ip, port.local.port),
+                            format!("Local: {}:{}", port.local.ip.clone().unwrap_or("N/A".to_string()), port.local.port),
                         ];
 
                         if let Some(remote) = &port.remote {
-                            details.push(format!("Remote: {}:{}", remote.ip, remote.port));
+                            details.push(format!("Remote: {}:{}", remote.ip.clone().unwrap_or("N/A".to_string()), remote.port));
                         }
                         if let Some(state) = &port.state {
                             details.push(format!("State: {}", state));
@@ -1589,7 +1617,11 @@ impl ServerHandler for WazuhToolsServer {
                 - 'get_wazuh_agent_processes': Retrieves a list of running processes for a specific Wazuh agent. \
                 Requires an 'agent_id' parameter (formatted as described for other agent-specific tools). Supports 'limit' (default 100) and 'search' (to filter by process name or command line) parameters.\n\
                 - 'get_wazuh_agent_ports': Retrieves a list of open network ports for a specific Wazuh agent. \
-                Requires an 'agent_id' parameter (formatted as described for other agent-specific tools). Supports 'limit' (default 100), 'protocol' (e.g., \"tcp\", \"udp\"), and 'state' (e.g., \"LISTEN\", \"ESTABLISHED\") parameters to filter the results. Note: State filtering is performed client-side by this server.\n\
+                Requires an 'agent_id' parameter (formatted as described for other agent-specific tools). Supports 'limit' (default 100), 'protocol' (e.g., \"tcp\", \"udp\"), and 'state' (e.g., \"LISTENING\", \"ESTABLISHED\") parameters to filter the results. Note: State filtering is performed client-side by this server.\n\
+                The 'state' parameter filters results:
+                  - If 'state' is 'LISTENING' (case-insensitive): Only ports explicitly in the 'LISTENING' state are returned. Ports with other states, no state, or an empty state string are filtered out.
+                  - If 'state' is any other value (e.g., 'ESTABLISHED'): Ports that are *not* in the 'LISTENING' state are returned. This includes ports with other defined states (like 'ESTABLISHED', 'TIME_WAIT', etc.) and ports that have *no state* defined. Ports with an empty state string are always filtered out.
+                Note: State filtering is performed client-side by this server. \
                 - 'search_wazuh_manager_logs': Searches Wazuh manager logs. \
                 Optional parameters: 'limit' (default 100), 'offset' (default 0), 'level' (e.g., \"error\", \"info\"), 'tag' (e.g., \"wazuh-modulesd\"), 'search_term' (for free-text search in log descriptions).\n\
                 - 'get_wazuh_manager_error_logs': Retrieves Wazuh manager error logs. \
