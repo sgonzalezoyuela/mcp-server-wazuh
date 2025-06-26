@@ -1332,44 +1332,86 @@ impl WazuhToolsServer {
         let mut logs_client = self.wazuh_logs_client.lock().await;
 
         match logs_client.get_logcollector_stats(&agent_id).await {
-            Ok(stats) => {
-                let targets_info: String = stats.targets.iter()
-                    .map(|target| format!("  - Name: {}, Drops: {}", target.name, target.drops))
-                    .collect::<Vec<String>>()
-                    .join("\n");
+            Ok(stats) => { // stats is wazuh_client::logs::LogCollectorStats
+                // Helper closure to format a LogCollectorPeriod
+                let format_period = |period_name: &str, period_data: &wazuh_client::logs::LogCollectorPeriod| -> String {
+                    let files_info: String = period_data.files.iter()
+                        .map(|file: &wazuh_client::logs::LogFile| {
+                            let targets_str: String = file.targets.iter()
+                                .map(|target: &wazuh_client::logs::LogTarget| {
+                                    format!("        - Name: {}, Drops: {}", target.name, target.drops)
+                                })
+                                .collect::<Vec<String>>()
+                                .join("\n");
+                            let targets_display = if targets_str.is_empty() {
+                                "        (No specific targets with drops for this file)".to_string()
+                            } else {
+                                format!("      Targets:\n{}", targets_str)
+                            };
+                            format!(
+                                "    - Location: {}\n      Events: {}\n      Bytes: {}\n{}",
+                                file.location, file.events, file.bytes, targets_display
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n\n");
+
+                    let files_display = if files_info.is_empty() {
+                        "    (No files processed in this period)".to_string()
+                    } else {
+                        files_info
+                    };
+
+                    format!(
+                        "{}:\n  Start: {}\n  End: {}\n  Files:\n{}",
+                        period_name, period_data.start, period_data.end, files_display
+                    )
+                };
+
+                let global_period_info = format_period("Global Period", &stats.global);
+                let interval_period_info = format_period("Interval Period", &stats.interval);
 
                 let formatted_text = format!(
-                    "Log Collector Stats for Agent: {}\nTotal Events: {}\nEvents Dropped: {}\nBytes Processed: {}\nTargets:\n{}",
-                    stats.agent_id, stats.events, stats.events_dropped, stats.bytes, targets_info
+                    "Log Collector Stats for Agent: {}\n\n{}\n\n{}",
+                    agent_id, // Use the agent_id from params
+                    global_period_info,
+                    interval_period_info
                 );
                 
-                tracing::info!("Successfully retrieved log collector stats for agent {}", agent_id);
+                tracing::info!("Successfully retrieved and formatted log collector stats for agent {}", agent_id);
                 Ok(CallToolResult::success(vec![Content::text(formatted_text)]))
             }
             Err(e) => {
                 // Check if the error is due to agent not found or stats not available
                 if let wazuh_client::WazuhApiError::ApiError(msg) = &e {
-                    if msg.contains(&format!("Log collector stats for agent {} not found", agent_id)) ||
-                       msg.contains("Agent Not Found") { // General agent not found
-                        tracing::info!("No log collector stats found for agent {}. Returning standard message.", agent_id);
+                    // This specific message is returned by the client if affected_items is empty/missing
+                    if msg.contains(&format!("Log collector stats for agent {} not found", agent_id)) {
+                        tracing::info!("No log collector stats found for agent {} (API error). Returning standard message.", agent_id);
                         return Ok(CallToolResult::success(vec![Content::text(
-                            format!("No log collector stats found for agent {}. The agent might not exist or stats are unavailable.", agent_id),
+                            format!("No log collector stats found for agent {}. The agent might not exist, stats are unavailable, or the agent is not active.", agent_id),
+                        )]));
+                    }
+                    // General "Agent Not Found" might also come as an ApiError from other layers
+                    if msg.contains("Agent Not Found") {
+                         tracing::info!("Agent {} not found (API error). Returning standard message.", agent_id);
+                         return Ok(CallToolResult::success(vec![Content::text(
+                            format!("Agent {} not found. Cannot retrieve log collector stats.", agent_id),
                         )]));
                     }
                 }
-                 match e {
-                    wazuh_client::WazuhApiError::HttpError { status, .. } if status == StatusCode::NOT_FOUND => {
-                         tracing::info!("No log collector stats found for agent {} (HTTP 404). Returning standard message.", agent_id);
-                         Ok(CallToolResult::success(vec![Content::text(
-                            format!("No log collector stats found for agent {}. The agent might not exist or stats are unavailable.", agent_id),
-                        )]))
-                    }
-                    _ => {
-                        let err_msg = format!("Error retrieving log collector stats for agent {} from Wazuh: {}", agent_id, e);
-                        tracing::error!("{}", err_msg);
-                        Ok(CallToolResult::error(vec![Content::text(err_msg)]))
+                // HTTP 404 can also indicate agent not found or endpoint issues
+                if let wazuh_client::WazuhApiError::HttpError { status, .. } = &e {
+                    if *status == StatusCode::NOT_FOUND {
+                        tracing::info!("No log collector stats found for agent {} (HTTP 404). Agent might not exist or endpoint unavailable.", agent_id);
+                        return Ok(CallToolResult::success(vec![Content::text(
+                           format!("No log collector stats found for agent {}. The agent might not exist, stats are unavailable, or the agent is not active.", agent_id),
+                       )]));
                     }
                 }
+                // Default error handling for other cases
+                let err_msg = format!("Error retrieving log collector stats for agent {} from Wazuh: {}", agent_id, e);
+                tracing::error!("{}", err_msg);
+                Ok(CallToolResult::error(vec![Content::text(err_msg)]))
             }
         }
     }
@@ -1627,7 +1669,7 @@ impl ServerHandler for WazuhToolsServer {
                 - 'get_wazuh_manager_error_logs': Retrieves Wazuh manager error logs. \
                 Optional parameter: 'limit' (default 100).\n\
                 - 'get_wazuh_log_collector_stats': Retrieves log collector statistics for a specific Wazuh agent. \
-                Requires an 'agent_id' parameter (formatted as described for other agent-specific tools).\n\
+                Requires an 'agent_id' parameter (formatted as described for other agent-specific tools). Returns detailed information for 'global' and 'interval' periods, including start/end times, and for each log file: location, events processed, bytes, and target-specific drop counts.\n\
                 - 'get_wazuh_remoted_stats': Retrieves statistics from the Wazuh remoted daemon (manager-wide).\n\
                 - 'get_wazuh_weekly_stats': Retrieves weekly statistics from the Wazuh manager. Returns a JSON object detailing various metrics aggregated over the past week. No parameters required.\n\
                 - 'get_wazuh_cluster_health': Checks the health of the Wazuh cluster. Returns a textual summary of the cluster's health status (e.g., enabled, running, connected nodes). No parameters required.\n\
